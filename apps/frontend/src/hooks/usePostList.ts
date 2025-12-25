@@ -20,7 +20,8 @@ export const usePostList = (initialStatus?: PostStatusType) => {
           limit,
           skip: pageNum * limit,
         });
-        setPosts(result.data);
+        console.log("result == ", result);
+        setPosts(result.posts);
         setTotal(result.total);
         setPage(pageNum);
       } catch (err) {

@@ -1,6 +1,10 @@
-import { PostStatus, type Post, type PostStatusType } from "@/types";
+import { format } from "date-fns";
+import { Calendar, Edit2, Play, Square, Trash2 } from "lucide-react";
+import React from "react";
 import { Button } from "./ui/button";
-import { Card } from "./ui/card";
+import { Checkbox } from "./ui/checkbox";
+import { TableCell, TableRow as TableRowComponent } from "./ui/table";
+import type { Post, PostStatusType } from "@/types";
 
 interface PostRowProps {
   post: Post;
@@ -14,7 +18,24 @@ interface PostRowProps {
   publishing?: boolean;
 }
 
-export const PostRow = ({
+const getStatusBadge = (status: PostStatusType) => {
+  const baseClasses = "px-2 py-1 rounded-full text-xs font-medium";
+
+  switch (status) {
+    case "DRAFT":
+      return `${baseClasses} bg-gray-100 text-gray-800`;
+    case "SCHEDULED":
+      return `${baseClasses} bg-blue-100 text-blue-800`;
+    case "PUBLISHED":
+      return `${baseClasses} bg-green-100 text-green-800`;
+    case "FAILED":
+      return `${baseClasses} bg-red-100 text-red-800`;
+    default:
+      return `${baseClasses} bg-gray-100 text-gray-800`;
+  }
+};
+
+export const PostRow: React.FC<PostRowProps> = ({
   post,
   selected,
   onSelect,
@@ -23,133 +44,116 @@ export const PostRow = ({
   onSchedule,
   onCancel,
   onDelete,
-  publishing,
-}: PostRowProps) => {
-  const getStatusColor = (status: PostStatusType) => {
-    switch (status) {
-      case PostStatus.DRAFT:
-        return "bg-gray-100 text-gray-800";
-      case PostStatus.SCHEDULED:
-        return "bg-blue-100 text-blue-800";
-      case PostStatus.PUBLISHED:
-        return "bg-green-100 text-green-800";
-      case PostStatus.FAILED:
-        return "bg-red-100 text-red-800";
-      default:
-        return "bg-gray-100 text-gray-800";
-    }
-  };
-
-  const truncateText = (text: string, length: number) => {
-    return text.length > length ? text.substring(0, length) + "..." : text;
-  };
+  publishing = false,
+}) => {
+  const canPublish = post.status === "DRAFT";
+  const canSchedule = post.status === "DRAFT";
+  const canCancel = post.status === "SCHEDULED";
 
   return (
-    <Card className="p-4 border-l-4" key={post._id}>
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-3 mb-2">
-            <input
-              type="checkbox"
-              checked={selected}
-              onChange={() => onSelect(post._id)}
-              className="w-4 h-4"
-            />
-            <span
-              className={`px-2 py-1 rounded text-sm font-medium ${getStatusColor(
-                post.status as PostStatusType
-              )}`}
-            >
-              {post.status}
-            </span>
-            <span className="text-sm text-gray-600">{post.postType}</span>
-          </div>
-          <p className="text-sm text-gray-700 mb-2">
-            {truncateText(post.content, 100)}
+    <TableRowComponent>
+      <TableCell>
+        <Checkbox
+          checked={selected}
+          onCheckedChange={() => onSelect(post._id)}
+        />
+      </TableCell>
+
+      <TableCell>
+        <div>
+          <p className="text-sm font-medium line-clamp-2 max-w-xs">
+            {post.content.length > 100
+              ? `${post.content.substring(0, 100)}...`
+              : post.content}
           </p>
           {post.imageUrls && post.imageUrls.length > 0 && (
-            <p className="text-xs text-gray-500 mb-2">
-              {post.imageUrls.length} media item(s)
-            </p>
+            <div className="text-xs text-gray-500 mt-1">
+              {post.imageUrls.length} image
+              {post.imageUrls.length > 1 ? "s" : ""}
+            </div>
           )}
-          <p className="text-xs text-gray-500">
-            Created: {new Date(post.createdAt).toLocaleDateString()}
-            {post.scheduledAt &&
-              ` • Scheduled: ${new Date(post.scheduledAt).toLocaleString()}`}
-          </p>
         </div>
+      </TableCell>
 
-        <div className="flex gap-2 flex-shrink-0">
-          {(post.status as PostStatusType) === PostStatus.DRAFT && (
-            <>
-              <Button
-                size="sm"
-                variant="default"
-                onClick={() => onPublish(post._id)}
-                disabled={publishing}
-              >
-                {publishing ? "Publishing..." : "Publish"}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => onSchedule(post._id)}
-              >
-                Schedule
-              </Button>
-            </>
-          )}
+      <TableCell>
+        <span className={getStatusBadge(post.status as PostStatusType)}>
+          {post.status}
+        </span>
+      </TableCell>
 
-          {(post.status as PostStatusType) === PostStatus.SCHEDULED && (
+      <TableCell>
+        <span className="text-sm text-gray-600">{post.postType}</span>
+      </TableCell>
+
+      <TableCell>
+        {post.scheduledAt ? (
+          <span className="text-sm text-gray-600">
+            {format(new Date(post.scheduledAt), "MMM dd, HH:mm")}
+          </span>
+        ) : (
+          <span className="text-sm text-gray-400">-</span>
+        )}
+      </TableCell>
+
+      <TableCell>
+        <span className="text-sm text-gray-600">{post.topic || "-"}</span>
+      </TableCell>
+
+      <TableCell className="text-right">
+        <div className="flex gap-1 justify-end">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onEdit(post)}
+            className="h-8 w-8 p-0"
+          >
+            <Edit2 className="h-4 w-4" />
+          </Button>
+
+          {canPublish && (
             <Button
+              variant="ghost"
               size="sm"
-              variant="outline"
-              onClick={() => onCancel(post._id)}
+              onClick={() => onPublish(post._id)}
+              disabled={publishing}
+              className="h-8 w-8 p-0"
             >
-              Cancel
+              <Play className="h-4 w-4" />
             </Button>
           )}
 
-          {(post.status as PostStatusType) === PostStatus.PUBLISHED &&
-            post.threadsPostId && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() =>
-                  window.open(
-                    `https://threads.net/${post.threadsPostId}`,
-                    "_blank"
-                  )
-                }
-              >
-                View
-              </Button>
-            )}
+          {canSchedule && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onSchedule(post._id)}
+              className="h-8 w-8 p-0"
+            >
+              <Calendar className="h-4 w-4" />
+            </Button>
+          )}
 
-          {(post.status as PostStatusType) === PostStatus.FAILED && (
-            <>
-              <Button size="sm" variant="outline" onClick={() => onEdit(post)}>
-                Edit
-              </Button>
-              <Button
-                size="sm"
-                variant="default"
-                onClick={() => onPublish(post._id)}
-              >
-                Retry
-              </Button>
-            </>
+          {canCancel && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onCancel(post._id)}
+              className="h-8 w-8 p-0"
+            >
+              <Square className="h-4 w-4" />
+            </Button>
           )}
 
           <Button
+            variant="ghost"
             size="sm"
-            variant="destructive"
             onClick={() => onDelete(post._id)}
+            className="h-8 w-8 p-0 text-red-600 hover:text-red-700"
           >
-            Delete
+            <Trash2 className="h-4 w-4" />
           </Button>
         </div>
-      </div>
-    </Card>
+      </TableCell>
+    </TableRowComponent>
   );
 };

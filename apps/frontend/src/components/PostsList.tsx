@@ -24,6 +24,8 @@ export const PostsList: React.FC = () => {
   const [selectedPosts, setSelectedPosts] = useState<Set<string>>(new Set());
   const [showLinksModal, setShowLinksModal] = useState(false);
   const [linksModalPost, setLinksModalPost] = useState<Post | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingPost, setEditingPost] = useState<Post | null>(null);
 
   // Load posts on mount and when filters change
   useEffect(() => {
@@ -116,8 +118,36 @@ export const PostsList: React.FC = () => {
   };
 
   const handleEditPost = (post: Post) => {
-    // TODO: Implement edit modal
-    console.log("Edit post:", post);
+    setEditingPost(post);
+    setShowEditModal(true);
+  };
+
+  const handleSavePost = async (updatedPost: Partial<Post>) => {
+    if (!editingPost) return;
+
+    try {
+      const response = await fetch(`/api/posts/${editingPost._id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(updatedPost),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to update post");
+      }
+
+      // Close modal
+      setShowEditModal(false);
+      setEditingPost(null);
+
+      // Refresh posts list
+      await fetchPosts(selectedStatus || undefined);
+    } catch (error) {
+      console.error("Failed to save post:", error);
+      alert("Failed to update post. Please try again.");
+    }
   };
 
   const exportToCSV = () => {
@@ -225,6 +255,107 @@ export const PostsList: React.FC = () => {
               setLinksModalPost(null);
             }}
           />
+        )}
+
+        {/* Edit Post Modal */}
+        {showEditModal && editingPost && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold">Edit Post</h2>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setShowEditModal(false);
+                    setEditingPost(null);
+                  }}
+                >
+                  ×
+                </Button>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Content
+                  </label>
+                  <textarea
+                    className="w-full p-3 border rounded-lg resize-none"
+                    rows={4}
+                    defaultValue={editingPost.content}
+                    id="edit-content"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Topic
+                  </label>
+                  <input
+                    type="text"
+                    className="w-full p-3 border rounded-lg"
+                    defaultValue={editingPost.topic || ""}
+                    id="edit-topic"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-2">
+                    Status
+                  </label>
+                  <select
+                    className="w-full p-3 border rounded-lg"
+                    defaultValue={editingPost.status}
+                    id="edit-status"
+                  >
+                    <option value={PostStatus.DRAFT}>Draft</option>
+                    <option value={PostStatus.SCHEDULED}>Scheduled</option>
+                    <option value={PostStatus.PUBLISHED}>Published</option>
+                  </select>
+                </div>
+
+                <div className="flex gap-2 pt-4">
+                  <Button
+                    onClick={() => {
+                      const content = (
+                        document.getElementById(
+                          "edit-content"
+                        ) as HTMLTextAreaElement
+                      )?.value;
+                      const topic = (
+                        document.getElementById(
+                          "edit-topic"
+                        ) as HTMLInputElement
+                      )?.value;
+                      const status = (
+                        document.getElementById(
+                          "edit-status"
+                        ) as HTMLSelectElement
+                      )?.value;
+
+                      handleSavePost({
+                        content,
+                        topic,
+                        status: status as PostStatusType,
+                      });
+                    }}
+                  >
+                    Save Changes
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setShowEditModal(false);
+                      setEditingPost(null);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
         )}
       </CardContent>
     </Card>

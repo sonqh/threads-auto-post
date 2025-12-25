@@ -1,18 +1,22 @@
-import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
-import { connectDatabase } from "./config/database.js";
-import postsRouter from "./routes/posts.js";
-import excelRouter from "./routes/excel.js";
-import credentialsRouter from "./routes/credentials.js";
+import express from "express";
 
-dotenv.config();
+// Initialize environment loader FIRST, before any other imports
+import dotenvConfig from "./config/dotenv.config.js";
+dotenvConfig.config();
+
+// Now safe to import config that depends on env vars
+import { connectDatabase } from "./config/database.js";
+import { appConfig } from "./config/env.js";
+import credentialsRouter from "./routes/credentials.js";
+import excelRouter from "./routes/excel.js";
+import postsRouter from "./routes/posts.js";
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = appConfig.server.port;
 
 // Middleware
-app.use(cors());
+app.use(cors({ origin: appConfig.server.corsOrigin }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

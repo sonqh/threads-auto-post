@@ -1,10 +1,9 @@
 import mongoose from "mongoose";
+import { appConfig } from "./env.js";
 
 export const connectDatabase = async (): Promise<void> => {
   try {
-    const uri =
-      process.env.MONGODB_URI ||
-      "mongodb://localhost:27017/threads-post-scheduler";
+    const uri = appConfig.database.mongodbUri;
     await mongoose.connect(uri);
     console.log("✅ MongoDB connected successfully");
   } catch (error) {

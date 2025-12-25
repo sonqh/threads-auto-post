@@ -87,9 +87,26 @@ export class ThreadsAdapter extends BasePlatformAdapter {
       };
     } catch (error: any) {
       console.error("Threads publish error:", error);
+
+      // Extract error message from Threads API response
+      let errorMessage = "Failed to publish to Threads";
+
+      if (error.response?.data?.error) {
+        const apiError = error.response.data.error;
+        errorMessage =
+          apiError.message || apiError.error_user_msg || errorMessage;
+
+        // Check for token expiration
+        if (apiError.code === 190 || errorMessage.includes("expired")) {
+          errorMessage = `Access token has expired. Please refresh your token. Details: ${errorMessage}`;
+        }
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+
       return {
         success: false,
-        error: error.message || "Failed to publish to Threads",
+        error: errorMessage,
       };
     }
   }

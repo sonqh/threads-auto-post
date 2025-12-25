@@ -1,5 +1,13 @@
 import type { Post } from "@/types";
 import { PostRow } from "./PostRow";
+import { Checkbox } from "./ui/checkbox";
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableHead,
+  TableRow as TableRowComponent,
+} from "./ui/table";
 
 interface PostsTableProps {
   posts: Post[];
@@ -24,14 +32,43 @@ export const PostsTable = ({
   onDelete,
   publishingIds,
 }: PostsTableProps) => {
+  const allSelected = posts.length > 0 && selectedIds.size === posts.length;
+
+  const handleSelectAll = () => {
+    posts.forEach((post) => {
+      if (!allSelected && !selectedIds.has(post._id)) {
+        onSelectPost(post._id);
+      } else if (allSelected && selectedIds.has(post._id)) {
+        onSelectPost(post._id);
+      }
+    });
+  };
+
+  if (posts.length === 0) {
+    return (
+      <div className="text-center py-12 text-gray-500">
+        <p>No posts found</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-3">
-      {posts.length === 0 ? (
-        <div className="text-center py-12 text-gray-500">
-          <p>No posts found</p>
-        </div>
-      ) : (
-        posts.map((post) => (
+    <Table>
+      <TableHeader>
+        <TableRowComponent>
+          <TableHead className="w-12">
+            <Checkbox checked={allSelected} onCheckedChange={handleSelectAll} />
+          </TableHead>
+          <TableHead>Content</TableHead>
+          <TableHead>Status</TableHead>
+          <TableHead>Type</TableHead>
+          <TableHead>Scheduled</TableHead>
+          <TableHead>Topic</TableHead>
+          <TableHead className="text-right">Actions</TableHead>
+        </TableRowComponent>
+      </TableHeader>
+      <TableBody>
+        {posts.map((post) => (
           <PostRow
             key={post._id}
             post={post}
@@ -44,8 +81,8 @@ export const PostsTable = ({
             onDelete={onDelete}
             publishing={publishingIds?.has(post._id)}
           />
-        ))
-      )}
-    </div>
+        ))}
+      </TableBody>
+    </Table>
   );
 };

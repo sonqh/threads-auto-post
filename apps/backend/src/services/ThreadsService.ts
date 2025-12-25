@@ -17,10 +17,111 @@ interface MeResponse {
   name?: string;
 }
 
+// In-memory token cache for automatic refresh
+interface TokenCache {
+  accessToken: string;
+  expiresAt: Date;
+  isRefreshing: boolean;
+}
+
+const tokenCache: TokenCache = {
+  accessToken: process.env.THREADS_ACCESS_TOKEN || "",
+  expiresAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000), // 60 days default
+  isRefreshing: false,
+};
+
 export class ThreadsService {
   private apiVersion: string = "v1.0";
   private baseUrl: string = `https://graph.threads.net/${this.apiVersion}`;
   private tokenUrl: string = "https://graph.threads.net/access_token";
+
+  /**
+   * Get valid token, automatically refresh if expired
+   */
+  private async getValidToken(): Promise<string> {
+    const now = new Date();
+    const bufferTime = 24 * 60 * 60 * 1000; // Refresh 1 day before expiration
+
+    // Check if token is about to expire
+    if (now.getTime() >= tokenCache.expiresAt.getTime() - bufferTime) {
+      if (!tokenCache.isRefreshing) {
+        console.log("🔄 Token expired or about to expire, refreshing...");
+        await this.refreshTokenAutomatically();
+      } else {
+        // Wait for ongoing refresh
+        while (tokenCache.isRefreshing) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      }
+    }
+
+    return tokenCache.accessToken;
+  }
+
+  /**
+   * Automatically refresh the access token
+   */
+  private async refreshTokenAutomatically(): Promise<void> {
+    if (tokenCache.isRefreshing) return;
+
+    tokenCache.isRefreshing = true;
+
+    try {
+      const clientSecret = process.env.THREADS_CLIENT_SECRET;
+      const currentToken = tokenCache.accessToken;
+
+      if (!clientSecret) {
+        throw new Error("THREADS_CLIENT_SECRET not configured");
+      }
+
+      console.log("🔄 Exchanging token for long-lived access token...");
+
+      const response = await axios.post<TokenResponse>(this.tokenUrl, {
+        grant_type: "th_exchange_token",
+        client_secret: clientSecret,
+        access_token: currentToken,
+      });
+
+      const newToken = response.data.access_token;
+      const expiresIn = response.data.expires_in || 5184000; // Default 60 days in seconds
+
+      // Update cache
+      tokenCache.accessToken = newToken;
+      tokenCache.expiresAt = new Date(Date.now() + expiresIn * 1000);
+
+      console.log("✅ Token refreshed successfully!");
+      console.log(
+        `📅 New token expires at: ${tokenCache.expiresAt.toLocaleString()}`
+      );
+      console.log(
+        "💡 Consider updating THREADS_ACCESS_TOKEN in your .env file with:"
+      );
+      console.log(`   ${newToken}`);
+
+      // TODO: When database is implemented, save the new token to DB
+    } catch (error: any) {
+      console.error("❌ Failed to refresh token automatically");
+
+      if (error.response?.data) {
+        const apiError = error.response.data.error;
+        console.error(
+          "Error details:",
+          apiError?.message || apiError?.error_user_msg
+        );
+
+        if (apiError?.code === 190 || apiError?.message?.includes("expired")) {
+          console.error(
+            "\n⚠️  Token cannot be refreshed. You need to generate a new token."
+          );
+          console.error("Follow the instructions in TOKEN_REFRESH_GUIDE.md");
+        }
+      }
+
+      throw error;
+    } finally {
+      tokenCache.isRefreshing = false;
+    }
+  }
 
   /**
    * Exchange authorization code for access token (OAuth callback)
@@ -128,24 +229,38 @@ export class ThreadsService {
   /**
    * Get credential by Threads user ID, refresh if needed
    */
+  /**
+   * Get valid credential (using environment variables for now)
+   */
   async getValidCredential(threadsUserId: string): Promise<IThreadsCredential> {
-    const credential = await ThreadsCredential.findOne({
-      threadsUserId,
-      status: CredentialStatus.ACTIVE,
-    });
+    // Get a valid token (will auto-refresh if needed)
+    const validToken = await this.getValidToken();
 
-    if (!credential) {
+    // For now, use environment variables instead of database lookup
+    // This assumes the user is always the one from the environment
+    const credential = {
+      threadsUserId: process.env.THREADS_USER_ID || threadsUserId,
+      accessToken: validToken,
+      clientId: process.env.THREADS_CLIENT_ID || "",
+      clientSecret: process.env.THREADS_CLIENT_SECRET || "",
+      redirectUri: process.env.THREADS_REDIRECT_URI || "",
+      status: CredentialStatus.ACTIVE,
+      scope: [],
+      errorCount: 0,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as unknown as IThreadsCredential;
+
+    if (!credential.accessToken) {
       throw new Error(
-        `No active credential found for Threads user ${threadsUserId}`
+        `THREADS_ACCESS_TOKEN not configured in environment variables`
       );
     }
 
-    // Check if token is about to expire (within 1 hour)
-    if (
-      credential.expiresAt &&
-      credential.expiresAt.getTime() < Date.now() + 3600000
-    ) {
-      await this.refreshToken(credential);
+    if (!credential.threadsUserId) {
+      throw new Error(
+        `THREADS_USER_ID not configured in environment variables`
+      );
     }
 
     return credential;

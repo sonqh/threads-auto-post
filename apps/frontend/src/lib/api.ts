@@ -24,7 +24,7 @@ export interface Post {
 }
 
 export interface PostsResponse {
-  data: Post[];
+  posts: Post[];
   total: number;
   limit: number;
   skip: number;
