@@ -4,6 +4,7 @@ import { connectDatabase } from "./config/database.js";
 import { createRedisConnection } from "./config/redis.js";
 import { Post, PostStatus } from "./models/Post.js";
 import { ThreadsAdapter } from "./adapters/ThreadsAdapter.js";
+import { schedulerService } from "./services/SchedulerService.js";
 
 dotenv.config();
 
@@ -43,6 +44,7 @@ const worker = new Worker(
         content: post.content,
         mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
         videoUrl,
+        comment: post.comment, // Pass comment field
       });
 
       if (result.success) {
@@ -89,18 +91,32 @@ worker.on("ready", () => {
   console.log("🔄 Worker started and ready to process jobs");
 });
 
+worker.on("active", (job) => {
+  const postId = job.data?.postId;
+  console.log(`🟢 Job ${job.id} is ACTIVE - Processing post: ${postId}`);
+});
+
+worker.on("progress", (job, progress) => {
+  console.log(`📊 Job ${job.id} progress: ${progress}%`);
+});
+
 worker.on("failed", (job, err) => {
-  console.error(`❌ Job ${job?.id} failed:`, err.message);
+  const postId = job?.data?.postId;
+  console.error(`❌ Job ${job?.id} FAILED for post ${postId}:`, err.message);
 });
 
 worker.on("completed", (job) => {
-  console.log(`✅ Job ${job.id} completed`);
+  const postId = job.data?.postId;
+  console.log(`✅ Job ${job.id} COMPLETED for post: ${postId}`);
 });
 
 const startWorker = async () => {
   try {
     await connectDatabase();
     console.log("🚀 Worker is running...");
+
+    // Start the scheduler for scheduled posts
+    schedulerService.start();
   } catch (error) {
     console.error("Failed to start worker:", error);
     process.exit(1);

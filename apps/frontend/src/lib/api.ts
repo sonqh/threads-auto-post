@@ -7,7 +7,7 @@ export interface Post {
   excelId?: string;
   topic?: string;
   content: string;
-  status: "DRAFT" | "SCHEDULED" | "PUBLISHED" | "FAILED";
+  status: "DRAFT" | "PUBLISHING" | "SCHEDULED" | "PUBLISHED" | "FAILED";
   skipAI?: boolean;
   threadsPostId?: string;
   postType: "TEXT" | "IMAGE" | "CAROUSEL" | "VIDEO";
@@ -16,6 +16,21 @@ export interface Post {
   imageUrls: string[];
   mergeLinks?: string;
   scheduledAt?: string;
+  scheduleConfig?: {
+    pattern: "ONCE" | "WEEKLY" | "MONTHLY" | "DATE_RANGE";
+    scheduledAt: string;
+    daysOfWeek?: number[];
+    dayOfMonth?: number;
+    endDate?: string;
+    time?: string;
+  };
+  publishingProgress?: {
+    status: "pending" | "publishing" | "published" | "failed";
+    startedAt?: string;
+    completedAt?: string;
+    currentStep?: string;
+    error?: string;
+  };
   publishedAt?: string;
   jobId?: string;
   error?: string;
@@ -70,10 +85,32 @@ export const postsApi = {
     return response.data;
   },
 
-  async schedulePost(id: string, scheduledAt: string): Promise<Post> {
-    const response = await axios.post(`${API_BASE_URL}/posts/${id}/schedule`, {
-      scheduledAt,
-    });
+  async schedulePost(
+    id: string,
+    config: {
+      pattern: "ONCE" | "WEEKLY" | "MONTHLY" | "DATE_RANGE";
+      scheduledAt: string;
+      daysOfWeek?: number[];
+      dayOfMonth?: number;
+      endDate?: string;
+      time?: string;
+    }
+  ): Promise<Post> {
+    const response = await axios.post(
+      `${API_BASE_URL}/posts/${id}/schedule`,
+      config
+    );
+    return response.data;
+  },
+
+  async getPublishingProgress(id: string): Promise<{
+    status: "pending" | "publishing" | "published" | "failed";
+    startedAt?: string;
+    completedAt?: string;
+    currentStep?: string;
+    error?: string;
+  }> {
+    const response = await axios.get(`${API_BASE_URL}/posts/${id}/progress`);
     return response.data;
   },
 
@@ -93,6 +130,70 @@ export const postsApi = {
   },
 };
 
+export const monitoringApi = {
+  async getQueueStats(): Promise<{
+    totalJobs: number;
+    activeJobs: number;
+    completedJobs: number;
+    failedJobs: number;
+    delayedJobs: number;
+    waitingJobs: number;
+  }> {
+    const response = await axios.get(`${API_BASE_URL}/posts/monitoring/stats`);
+    return response.data;
+  },
+
+  async getQueueHealth(): Promise<{
+    status: "healthy" | "degraded" | "unhealthy";
+    stats: {
+      totalJobs: number;
+      activeJobs: number;
+      completedJobs: number;
+      failedJobs: number;
+      delayedJobs: number;
+      waitingJobs: number;
+    };
+    healthScore: number;
+    lastCompletedJob?: { id: string; timestamp: number };
+    failureRate: number;
+  }> {
+    const response = await axios.get(`${API_BASE_URL}/posts/monitoring/health`);
+    return response.data;
+  },
+
+  async getRecentJobs(limit: number = 50): Promise<{
+    active: any[];
+    completed: any[];
+    failed: any[];
+  }> {
+    const response = await axios.get(
+      `${API_BASE_URL}/posts/monitoring/jobs/recent`,
+      {
+        params: { limit },
+      }
+    );
+    return response.data;
+  },
+
+  async getJobsByState(
+    state: "active" | "completed" | "failed" | "delayed" | "waiting",
+    limit: number = 20
+  ): Promise<any[]> {
+    const response = await axios.get(
+      `${API_BASE_URL}/posts/monitoring/jobs/state/${state}`,
+      { params: { limit } }
+    );
+    return response.data;
+  },
+
+  async getJobDetails(jobId: string): Promise<any> {
+    const response = await axios.get(
+      `${API_BASE_URL}/posts/monitoring/jobs/${jobId}`
+    );
+    return response.data;
+  },
+};
+
 export const excelApi = {
   async importExcel(file: File): Promise<{
     success: boolean;
@@ -105,6 +206,35 @@ export const excelApi = {
     formData.append("file", file);
     const response = await axios.post(
       `${API_BASE_URL}/excel/import`,
+      formData,
+      {
+        headers: { "Content-Type": "multipart/form-data" },
+      }
+    );
+    return response.data;
+  },
+
+  async checkDuplicates(file: File): Promise<{
+    success: boolean;
+    duplicates: Array<{
+      rowIndex: number;
+      description?: string;
+      topic?: string;
+      imageUrls?: string[];
+      matches: Array<{
+        _id: string;
+        content: string;
+        comment?: string;
+        topic?: string;
+        imageUrls: string[];
+      }>;
+    }>;
+    totalRows: number;
+  }> {
+    const formData = new FormData();
+    formData.append("file", file);
+    const response = await axios.post(
+      `${API_BASE_URL}/excel/check-duplicates`,
       formData,
       {
         headers: { "Content-Type": "multipart/form-data" },

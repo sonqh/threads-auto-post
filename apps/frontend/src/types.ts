@@ -1,5 +1,6 @@
 export const PostStatus = {
   DRAFT: "DRAFT",
+  PUBLISHING: "PUBLISHING",
   SCHEDULED: "SCHEDULED",
   PUBLISHED: "PUBLISHED",
   FAILED: "FAILED",
@@ -16,6 +17,15 @@ export const PostType = {
 
 export type PostTypeType = (typeof PostType)[keyof typeof PostType];
 
+export interface ScheduleConfig {
+  pattern: "ONCE" | "WEEKLY" | "MONTHLY" | "DATE_RANGE";
+  scheduledAt: string;
+  daysOfWeek?: number[];
+  dayOfMonth?: number;
+  endDate?: string;
+  time?: string;
+}
+
 export interface Post {
   _id: string;
   content: string;
@@ -27,8 +37,17 @@ export interface Post {
   comment?: string;
   threadsPostId?: string;
   scheduledAt?: string | Date;
+  scheduleConfig?: ScheduleConfig;
+  publishingProgress?: {
+    status: "pending" | "publishing" | "published" | "failed";
+    startedAt?: string | Date;
+    completedAt?: string | Date;
+    currentStep?: string;
+    error?: string;
+  };
   jobId?: string;
   excelId?: string;
+  error?: string;
   createdAt: string | Date;
   updatedAt: string | Date;
 }

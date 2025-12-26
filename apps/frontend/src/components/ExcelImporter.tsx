@@ -9,6 +9,7 @@ import {
   CardTitle,
 } from "./ui/card";
 import { excelApi } from "../lib/api";
+import { DuplicatePostsModal } from "./DuplicatePostsModal";
 import type { Post } from "@/types";
 
 export const ExcelImporter: React.FC<{ onImportComplete?: () => void }> = ({
@@ -16,6 +17,17 @@ export const ExcelImporter: React.FC<{ onImportComplete?: () => void }> = ({
 }) => {
   const [file, setFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
+  const [checkingDuplicates, setCheckingDuplicates] = useState(false);
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+  const [duplicateGroups, setDuplicateGroups] = useState<
+    Array<{
+      index: number;
+      matches: any[];
+      description?: string;
+      topic?: string;
+      imageUrls?: string[];
+    }>
+  >([]);
   const [result, setResult] = useState<{
     success?: boolean;
     imported?: number;
@@ -35,12 +47,41 @@ export const ExcelImporter: React.FC<{ onImportComplete?: () => void }> = ({
       if (selectedFile) {
         setFile(selectedFile);
         setResult(null);
+        setShowDuplicateModal(false);
       }
     },
     []
   );
 
-  const handleImport = useCallback(async () => {
+  const handleCheckDuplicates = useCallback(async () => {
+    if (!file) return;
+
+    setCheckingDuplicates(true);
+    try {
+      const response = await excelApi.checkDuplicates(file);
+      if (response.duplicates && response.duplicates.length > 0) {
+        // Show duplicates modal
+        setDuplicateGroups(response.duplicates);
+        setShowDuplicateModal(true);
+      } else {
+        // No duplicates, proceed with import
+        await handleImportAfterDuplicateCheck();
+      }
+    } catch (error: unknown) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to check duplicates";
+      setResult({
+        success: false,
+        imported: 0,
+        errors: 1,
+        errorDetails: [{ row: 0, error: errorMessage }],
+      });
+    } finally {
+      setCheckingDuplicates(false);
+    }
+  }, [file]);
+
+  const handleImportAfterDuplicateCheck = useCallback(async () => {
     if (!file) return;
 
     setImporting(true);
@@ -50,6 +91,8 @@ export const ExcelImporter: React.FC<{ onImportComplete?: () => void }> = ({
       if (onImportComplete) {
         onImportComplete();
       }
+      setFile(null);
+      setShowDuplicateModal(false);
     } catch (error: unknown) {
       const errorMessage =
         error instanceof Error ? error.message : "An unknown error occurred";
@@ -63,6 +106,10 @@ export const ExcelImporter: React.FC<{ onImportComplete?: () => void }> = ({
       setImporting(false);
     }
   }, [file, onImportComplete]);
+
+  const handleImport = useCallback(async () => {
+    await handleCheckDuplicates();
+  }, [handleCheckDuplicates]);
 
   return (
     <Card>
@@ -92,8 +139,15 @@ export const ExcelImporter: React.FC<{ onImportComplete?: () => void }> = ({
               </span>
             </div>
           </label>
-          <Button onClick={handleImport} disabled={!file || importing}>
-            {importing ? "Importing..." : "Import"}
+          <Button
+            onClick={handleImport}
+            disabled={!file || importing || checkingDuplicates}
+          >
+            {checkingDuplicates
+              ? "Checking for duplicates..."
+              : importing
+              ? "Importing..."
+              : "Import"}
           </Button>
         </div>
 
@@ -137,6 +191,15 @@ export const ExcelImporter: React.FC<{ onImportComplete?: () => void }> = ({
               </div>
             )}
           </div>
+        )}
+
+        {showDuplicateModal && duplicateGroups.length > 0 && (
+          <DuplicatePostsModal
+            duplicateGroups={duplicateGroups}
+            onContinue={handleImportAfterDuplicateCheck}
+            onCancel={() => setShowDuplicateModal(false)}
+            isContinuing={importing}
+          />
         )}
       </CardContent>
     </Card>

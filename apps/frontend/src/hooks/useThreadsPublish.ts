@@ -42,13 +42,19 @@ export const useThreadsPublish = () => {
   }, []);
 
   const schedulePost = useCallback(
-    async (postId: string, scheduledAt: Date) => {
-      if (scheduledAt <= new Date()) {
-        throw new Error("Scheduled time must be in the future");
+    async (
+      postId: string,
+      config: {
+        pattern: "ONCE" | "WEEKLY" | "MONTHLY" | "DATE_RANGE";
+        scheduledAt: string;
+        daysOfWeek?: number[];
+        dayOfMonth?: number;
+        endDate?: string;
+        time?: string;
       }
-
+    ) => {
       try {
-        return await postsApi.schedulePost(postId, scheduledAt.toISOString());
+        return await postsApi.schedulePost(postId, config);
       } catch (err) {
         throw err instanceof Error ? err : new Error("Failed to schedule post");
       }

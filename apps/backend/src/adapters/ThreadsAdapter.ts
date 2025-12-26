@@ -44,8 +44,63 @@ export class ThreadsAdapter extends BasePlatformAdapter {
     }
   }
 
+  /**
+   * Extract URLs from text
+   */
+  private extractUrls(text: string): string[] {
+    const urlRegex = /https?:\/\/[^\s]+/g;
+    return text.match(urlRegex) || [];
+  }
+
+  /**
+   * Split comment into parts if it exceeds link limit
+   */
+  private splitCommentByLinkLimit(
+    text: string,
+    maxLinks: number = 5
+  ): string[] {
+    const lines = text.split("\n");
+    const parts: string[] = [];
+    let currentPart = "";
+    let currentLinkCount = 0;
+
+    for (const line of lines) {
+      const lineUrls = this.extractUrls(line);
+      const lineUrlCount = lineUrls.length;
+
+      // If adding this line would exceed limit, start a new part
+      if (currentLinkCount + lineUrlCount > maxLinks && currentPart.trim()) {
+        parts.push(currentPart.trim());
+        currentPart = line;
+        currentLinkCount = lineUrlCount;
+      } else {
+        if (currentPart) {
+          currentPart += "\n" + line;
+        } else {
+          currentPart = line;
+        }
+        currentLinkCount += lineUrlCount;
+      }
+    }
+
+    // Add remaining part
+    if (currentPart.trim()) {
+      parts.push(currentPart.trim());
+    }
+
+    return parts.length > 0 ? parts : [text];
+  }
+
   async publishPost(data: PublishPostData): Promise<PublishResult> {
     try {
+      log.info("🚀 Starting publishPost", {
+        hasComment: !!data.comment,
+        hasVideoUrl: !!data.videoUrl,
+        mediaUrlsCount: data.mediaUrls?.length || 0,
+        contentLength: data.content.length,
+        commentLength: data.comment?.length || 0,
+      });
+
       if (!this.userId || !this.accessToken) {
         return {
           success: false,
@@ -57,48 +112,113 @@ export class ThreadsAdapter extends BasePlatformAdapter {
       let containerId: string;
 
       if (data.videoUrl) {
+        log.debug("📹 Creating video container");
         // Video post
         containerId = await this.createVideoContainer(
           data.content,
           data.videoUrl
         );
+        log.debug(`✅ Video container created: ${containerId}`);
       } else if (data.mediaUrls && data.mediaUrls.length > 1) {
+        log.debug(
+          `🎠 Creating carousel container with ${data.mediaUrls.length} images`
+        );
         // Carousel post
         containerId = await this.createCarouselContainer(
           data.content,
           data.mediaUrls
         );
+        log.debug(`✅ Carousel container created: ${containerId}`);
       } else if (data.mediaUrls && data.mediaUrls.length === 1) {
+        log.debug(`🖼️ Creating image container`);
         // Single image post
         containerId = await this.createImageContainer(
           data.content,
           data.mediaUrls[0]
         );
+        log.debug(`✅ Image container created: ${containerId}`);
       } else {
+        log.debug("📝 Creating text-only container");
         // Text-only post
         containerId = await this.createTextContainer(data.content);
+        log.debug(`✅ Text container created: ${containerId}`);
       }
 
       // Step 2: Publish the container
+      log.info(`📤 Publishing container ${containerId}`);
       const postId = await this.publishContainer(containerId);
-      log.thread(`Post published successfully with ID: ${postId}`);
+      log.thread(`🧵 Post published successfully with ID: ${postId}`);
 
-      // Step 3: Wait 30 seconds before posting comment (if provided)
+      // Step 3: Handle comments with link limit
       if (data.comment) {
-        log.info("Waiting 30 seconds before posting comment...");
-        await new Promise((resolve) => setTimeout(resolve, 30000));
+        // Check if comment has more than 5 links
+        const commentUrls = this.extractUrls(data.comment);
+        log.info("💬 Analyzing comment", {
+          totalUrls: commentUrls.length,
+          commentLength: data.comment.length,
+        });
 
-        // Step 4: Create comment text container
-        log.thread("Creating comment container...");
-        const commentContainerId = await this.createCommentContainer(
-          postId,
-          data.comment
-        );
+        if (commentUrls.length > 5) {
+          // Split comment into multiple parts
+          const commentParts = this.splitCommentByLinkLimit(data.comment, 5);
+          log.info(
+            `💬 Comment split into ${commentParts.length} parts due to link limit`
+          );
 
-        // Step 5: Publish the comment
-        log.thread("Publishing comment...");
-        await this.publishContainer(commentContainerId);
-        log.success("Comment published successfully!");
+          let replyToId = postId; // First comment replies to the post
+
+          for (let i = 0; i < commentParts.length; i++) {
+            const part = commentParts[i];
+            const partUrls = this.extractUrls(part);
+
+            log.info(
+              `💬 Posting comment part ${i + 1}/${commentParts.length}`,
+              {
+                urlCount: partUrls.length,
+                textLength: part.length,
+                replyingTo: replyToId,
+              }
+            );
+
+            await new Promise((resolve) => setTimeout(resolve, 30000)); // Wait 30s between comments
+
+            const commentContainerId = await this.createCommentContainer(
+              replyToId,
+              part
+            );
+            log.debug(`✅ Comment container created: ${commentContainerId}`);
+
+            const commentPostId = await this.publishContainer(
+              commentContainerId
+            );
+            log.success(
+              `💬 Comment part ${
+                i + 1
+              } published successfully with ID: ${commentPostId}`
+            );
+
+            // Next comments reply to this comment
+            replyToId = commentPostId;
+          }
+        } else {
+          // Original flow: single comment
+          log.info("💬 Comment within link limit, posting single comment", {
+            urlCount: commentUrls.length,
+          });
+
+          await new Promise((resolve) => setTimeout(resolve, 30000));
+
+          log.info(`Creating comment container for post ${postId}...`);
+          const commentContainerId = await this.createCommentContainer(
+            postId,
+            data.comment
+          );
+          log.debug(`✅ Comment container created: ${commentContainerId}`);
+
+          log.info(`📤 Publishing comment container ${commentContainerId}`);
+          await this.publishContainer(commentContainerId);
+          log.success("💬 Comment published successfully!");
+        }
       }
 
       return {
@@ -106,7 +226,31 @@ export class ThreadsAdapter extends BasePlatformAdapter {
         platformPostId: postId,
       };
     } catch (error: any) {
-      log.error("Threads publish error", error);
+      log.error("❌ Error in publishPost", {
+        errorType: error.constructor.name,
+        errorMessage: error.message,
+      });
+
+      // Enhanced error logging with full details
+      if (axios.isAxiosError(error)) {
+        log.error("🔴 Threads API error", {
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          errorData: error.response?.data,
+          errorMessage: error.response?.data?.error?.message,
+          errorCode: error.response?.data?.error?.code,
+          errorType: error.response?.data?.error?.type,
+          errorUserMsg: error.response?.data?.error?.error_user_msg,
+          requestUrl: error.config?.url,
+          requestMethod: error.config?.method,
+          requestData: error.config?.data,
+        });
+      } else {
+        log.error("Threads publish error", {
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        });
+      }
 
       // Extract error message from Threads API response
       let errorMessage = "Failed to publish to Threads";
@@ -132,47 +276,112 @@ export class ThreadsAdapter extends BasePlatformAdapter {
   }
 
   private async createTextContainer(text: string): Promise<string> {
-    const response = await axios.post(
-      `${this.baseUrl}/${this.userId}/threads`,
-      {
-        media_type: "TEXT",
-        text,
-        access_token: this.accessToken,
+    try {
+      const response = await axios.post(
+        `${this.baseUrl}/${this.userId}/threads`,
+        {
+          media_type: "TEXT",
+          text,
+          access_token: this.accessToken,
+        }
+      );
+      return response.data.id;
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        log.error(`Failed to create text container`, {
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          data: error.response?.data,
+          textLength: text.length,
+        });
       }
-    );
-    return response.data.id;
+      throw error;
+    }
   }
 
   private async createCommentContainer(
     replyToId: string,
     text: string
   ): Promise<string> {
-    const response = await axios.post(
-      `${this.baseUrl}/${this.userId}/threads`,
-      {
-        media_type: "TEXT",
-        text,
-        reply_to_id: replyToId,
-        access_token: this.accessToken,
+    try {
+      log.info(`Creating comment for post ${replyToId}`, {
+        textLength: text.length,
+      });
+      const response = await axios.post(
+        `${this.baseUrl}/${this.userId}/threads`,
+        {
+          media_type: "TEXT",
+          text,
+          reply_to_id: replyToId,
+          access_token: this.accessToken,
+        }
+      );
+      log.info(`Comment container created: ${response.data.id}`);
+      return response.data.id;
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        log.error(`Failed to create comment container`, {
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          data: error.response?.data,
+          replyToId,
+          textLength: text.length,
+          requestUrl: `${this.baseUrl}/${this.userId}/threads`,
+        });
       }
-    );
-    return response.data.id;
+      throw error;
+    }
   }
 
   private async createImageContainer(
     text: string,
     imageUrl: string
   ): Promise<string> {
-    const response = await axios.post(
-      `${this.baseUrl}/${this.userId}/threads`,
-      {
+    try {
+      log.info("🖼️ Creating image container", {
+        imageUrl,
+        textLength: text.length,
+        baseUrl: this.baseUrl,
+        userId: this.userId,
+      });
+
+      const payload = {
         media_type: "IMAGE",
         image_url: imageUrl,
         text,
         access_token: this.accessToken,
+      };
+
+      log.debug("📤 Sending image container request", {
+        url: `${this.baseUrl}/${this.userId}/threads`,
+        payloadKeys: Object.keys(payload),
+      });
+
+      const response = await axios.post(
+        `${this.baseUrl}/${this.userId}/threads`,
+        payload
+      );
+
+      log.info(`✅ Image container response:`, {
+        containerId: response.data.id,
+        status: response.status,
+      });
+
+      return response.data.id;
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        log.error(`❌ Failed to create image container`, {
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          errorMessage: error.response?.data?.error?.message,
+          errorCode: error.response?.data?.error?.code,
+          errorUserMsg: error.response?.data?.error?.error_user_msg,
+          imageUrl,
+          textLength: text.length,
+        });
       }
-    );
-    return response.data.id;
+      throw error;
+    }
   }
 
   private async createVideoContainer(
@@ -252,13 +461,42 @@ export class ThreadsAdapter extends BasePlatformAdapter {
   }
 
   private async publishContainer(containerId: string): Promise<string> {
-    const response = await axios.post(
-      `${this.baseUrl}/${this.userId}/threads_publish`,
-      {
+    try {
+      log.info(`📤 Publishing container`, {
+        containerId,
+        url: `${this.baseUrl}/${this.userId}/threads_publish`,
+      });
+
+      const payload = {
         creation_id: containerId,
         access_token: this.accessToken,
+      };
+
+      const response = await axios.post(
+        `${this.baseUrl}/${this.userId}/threads_publish`,
+        payload
+      );
+
+      log.info(`✅ Container published`, {
+        publishedId: response.data.id,
+        status: response.status,
+        containerId,
+      });
+
+      return response.data.id;
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        log.error(`❌ Failed to publish container`, {
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          errorMessage: error.response?.data?.error?.message,
+          errorCode: error.response?.data?.error?.code,
+          errorUserMsg: error.response?.data?.error?.error_user_msg,
+          containerId,
+          url: `${this.baseUrl}/${this.userId}/threads_publish`,
+        });
       }
-    );
-    return response.data.id;
+      throw error;
+    }
   }
 }

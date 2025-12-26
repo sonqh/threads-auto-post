@@ -36,13 +36,27 @@ export class ExcelService {
       return cellValue.text || cellValue.hyperlink || null;
     }
 
-    // Handle rich text objects
-    if (typeof cellValue === "object" && cellValue.richText) {
+    // Handle rich text objects - multiple formats
+    if (
+      typeof cellValue === "object" &&
+      cellValue.richText &&
+      Array.isArray(cellValue.richText)
+    ) {
       const text = cellValue.richText
-        .map((t: any) => t.text || "")
+        .map((t: any) => (typeof t === "object" && t.text ? t.text : ""))
         .join("")
         .trim();
       return text || null;
+    }
+
+    // Handle plain objects that might contain text
+    if (typeof cellValue === "object") {
+      // Try to extract text if it's a richText-like structure
+      if (cellValue.text && typeof cellValue.text === "string") {
+        return cellValue.text.trim() || null;
+      }
+      // Last resort: return null instead of the object
+      return null;
     }
 
     // Regular string/number
@@ -174,9 +188,12 @@ export class ExcelService {
       await workbook.xlsx.load(uint8Array.buffer);
 
       const sheetName = "Danh Sách Bài Post Decor";
-      const worksheet = workbook.getWorksheet(sheetName);
+      let worksheet =
+        workbook.getWorksheet(sheetName) ||
+        workbook.getWorksheet("Danh Sách Bài Post");
 
       if (!worksheet) {
+        // fallback to default sheet name
         throw new Error(
           `Sheet "${sheetName}" not found. Available: ${workbook.worksheets
             .map((w) => w.name)
@@ -250,18 +267,13 @@ export class ExcelService {
   ): void {
     const content = rowData["nội dung bài post"];
     const typeRaw = rowData["loại bài viết"];
-    const comment = rowData["comment"];
 
-    // Check required fields
-    if (!content || !typeRaw) {
-      const missing = [];
-      if (!content) missing.push("Nội dung bài post");
-      if (!typeRaw) missing.push("Loại bài viết");
-      errors.push({
-        row: rowNumber,
-        error: `Missing required fields: ${missing.join(", ")}`,
-      });
-      return;
+    // Extract comment properly to handle rich text and ensure it's a string
+    const commentRaw = rowData["comment"];
+    let comment: string | undefined;
+    if (commentRaw) {
+      const extracted = this.extractCellValue(commentRaw);
+      comment = extracted ? String(extracted).trim() : undefined;
     }
 
     const postType = this.mapPostType(typeRaw);
@@ -285,7 +297,6 @@ export class ExcelService {
       "chủ đề": "topic",
       "trạng thái": "status",
       "skip ai": "skipAI",
-      comment: "comment",
       "gộp link": "mergeLinks",
     };
 
@@ -313,6 +324,11 @@ export class ExcelService {
         postData[fieldName] = value;
       }
     });
+
+    // Add comment if extracted and non-empty
+    if (comment) {
+      postData.comment = comment;
+    }
 
     // Collect all media links
     const imageUrls: string[] = [];
@@ -354,6 +370,166 @@ export class ExcelService {
     const post = new Post(postData);
     posts.push(post);
   }
-}
 
-export const excelService = new ExcelService();
+  /**
+   * Check for duplicates in Excel file before importing
+   */
+  async checkDuplicates(fileBuffer: Buffer): Promise<{
+    success: boolean;
+    duplicates: Array<{
+      rowIndex: number;
+      description?: string;
+      topic?: string;
+      imageUrls?: string[];
+      matches: Array<{
+        _id: string;
+        content: string;
+        comment?: string;
+        topic?: string;
+        imageUrls: string[];
+      }>;
+    }>;
+    totalRows: number;
+  }> {
+    try {
+      const workbook = new ExcelJS.Workbook();
+      const uint8Array = new Uint8Array(fileBuffer);
+      await workbook.xlsx.load(uint8Array.buffer);
+
+      const sheetName = "Danh Sách Bài Post Decor";
+      let worksheet =
+        workbook.getWorksheet(sheetName) ||
+        workbook.getWorksheet("Danh Sách Bài Post");
+
+      if (!worksheet) {
+        throw new Error(
+          `Sheet "${sheetName}" not found. Available: ${workbook.worksheets
+            .map((w) => w.name)
+            .join(", ")}`
+        );
+      }
+
+      // Read header row
+      const headerRow = worksheet.getRow(1);
+      const headerMap: Record<number, string> = {};
+      headerRow.eachCell((cell: any, colNumber: number) => {
+        const header = this.normalizeHeader((cell.value as string) || "");
+        if (header) {
+          headerMap[colNumber] = header;
+        }
+      });
+
+      // Get all existing posts
+      const existingPosts = await Post.find().select(
+        "_id content comment topic imageUrls"
+      );
+
+      const duplicates: Array<{
+        rowIndex: number;
+        description?: string;
+        topic?: string;
+        imageUrls?: string[];
+        matches: any[];
+      }> = [];
+      let rowCount = 0;
+
+      // Process rows
+      worksheet.eachRow(
+        { includeEmpty: false },
+        (row: any, rowNumber: number) => {
+          if (rowNumber === 1) return; // Skip header
+          rowCount++;
+
+          const rowData: Record<string, any> = {};
+          row.eachCell((cell: any, colNumber: number) => {
+            const header = headerMap[colNumber];
+            if (!header) return;
+            rowData[header] = cell.value;
+          });
+
+          const comment = rowData["comment"];
+          const topic = rowData["chủ đề"];
+          const mergeLinks = rowData["gộp link"];
+          const videoUrl = rowData["link video"];
+
+          // Collect image URLs
+          const imageUrls: string[] = [];
+          if (videoUrl) {
+            const value = this.extractCellValue(videoUrl);
+            if (value) imageUrls.push(this.sanitizeUrl(value));
+          }
+
+          IMAGE_COLUMNS.forEach((colName) => {
+            const rawValue = rowData[colName];
+            const value = this.extractCellValue(rawValue);
+            if (value) imageUrls.push(this.sanitizeUrl(value));
+          });
+
+          if (mergeLinks) {
+            const merged = this.parseMergeLinks(mergeLinks);
+            merged.forEach((url: string) =>
+              imageUrls.push(this.sanitizeUrl(url))
+            );
+          }
+
+          const uniqueImageUrls = [...new Set(imageUrls)];
+
+          // Check for duplicates
+          const matches = existingPosts.filter((existingPost) => {
+            const existingDesc = String(existingPost.comment || "")
+              .toLowerCase()
+              .trim();
+            const existingTopic = String(existingPost.topic || "")
+              .toLowerCase()
+              .trim();
+            const existingUrls = (existingPost.imageUrls || [])
+              .map((url: string) => String(url).toLowerCase().trim())
+              .sort();
+
+            const rowDesc = String(comment || "")
+              .toLowerCase()
+              .trim();
+            const rowTopic = String(topic || "")
+              .toLowerCase()
+              .trim();
+            const rowUrls = uniqueImageUrls
+              .map((url: string) => String(url).toLowerCase().trim())
+              .sort();
+
+            // Check if all three fields match
+            return (
+              existingDesc === rowDesc &&
+              existingTopic === rowTopic &&
+              existingUrls.join("|") === rowUrls.join("|")
+            );
+          });
+
+          if (matches.length > 0) {
+            duplicates.push({
+              rowIndex: rowNumber - 1, // Adjust to 0-based index
+              description: comment,
+              topic: topic ? String(topic) : undefined,
+              imageUrls: uniqueImageUrls,
+              matches: matches.map((p) => ({
+                _id: p._id,
+                content: p.content,
+                comment: p.comment,
+                topic: p.topic,
+                imageUrls: p.imageUrls,
+              })),
+            });
+          }
+        }
+      );
+
+      return {
+        success: true,
+        duplicates,
+        totalRows: rowCount,
+      };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      throw new Error(`Duplicate check failed: ${message}`);
+    }
+  }
+}

@@ -1,6 +1,15 @@
-import { Post, PostStatus, PostType, IPost } from "../models/Post.js";
+import {
+  Post,
+  PostStatus,
+  PostType,
+  IPost,
+  SchedulePattern,
+  type ScheduleConfig,
+} from "../models/Post.js";
 import { ThreadsAdapter } from "../adapters/ThreadsAdapter.js";
 import { threadsService } from "./ThreadsService.js";
+import axios from "axios";
+import { log } from "../config/logger.js";
 
 export class PostService {
   private threadsAdapter: ThreadsAdapter;
@@ -83,7 +92,7 @@ export class PostService {
   }
 
   /**
-   * Publish post to Threads
+   * Publish post to Threads with progress tracking
    */
   async publishPost(
     postId: string,
@@ -96,12 +105,28 @@ export class PostService {
     try {
       const post = await this.getPost(postId);
 
+      // Update progress: publishing started
+      post.status = PostStatus.PUBLISHING;
+      post.publishingProgress = {
+        status: "publishing",
+        startedAt: new Date(),
+        currentStep: "Initializing...",
+      };
+      await post.save();
+      log.info(`📊 [${postId}] Publishing started`, { status: "publishing" });
+
       // Get Threads credential
+      post.publishingProgress.currentStep = "Fetching credentials...";
+      await post.save();
+
       const credential = await threadsService.getValidCredential(
         threadsUserId || process.env.THREADS_USER_ID || ""
       );
 
       // Validate post for publishing
+      post.publishingProgress.currentStep = "Validating post...";
+      await post.save();
+
       this.validatePostForPublishing(post);
 
       // Update ThreadsAdapter with actual credentials
@@ -110,12 +135,26 @@ export class PostService {
         credential.accessToken
       );
 
+      // Track progress through adapter
+      const progressCallback = (step: string) => {
+        post.publishingProgress!.currentStep = step;
+        post
+          .save()
+          .catch((err) =>
+            log.error("Failed to save progress", { error: err.message })
+          );
+      };
+
       // Publish based on post type
+      post.publishingProgress.currentStep = "Publishing to Threads...";
+      await post.save();
+
       const result = await adapter.publishPost({
         content: post.content,
         mediaUrls: post.imageUrls,
         videoUrl: post.videoUrl,
-        comment: post.comment, // Include comment if provided
+        comment: post.comment,
+        progressCallback, // Optional: pass callback if needed in adapter
       });
 
       // Update post with result
@@ -123,7 +162,17 @@ export class PostService {
       post.status = PostStatus.PUBLISHED;
       post.publishedAt = new Date();
       post.error = undefined;
+      post.publishingProgress = {
+        status: "published",
+        startedAt: post.publishingProgress?.startedAt,
+        completedAt: new Date(),
+        currentStep: "Published successfully!",
+      };
       await post.save();
+
+      log.success(`📊 [${postId}] Publishing completed`, {
+        threadsPostId: result.platformPostId,
+      });
 
       return {
         success: true,
@@ -131,11 +180,39 @@ export class PostService {
       };
     } catch (error) {
       const post = await this.getPost(postId);
+
+      // Enhanced error logging
+      if (axios.isAxiosError(error)) {
+        log.error("Threads API error during publish", {
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          responseData: error.response?.data,
+          requestUrl: error.config?.url,
+          method: error.config?.method,
+          postId,
+        });
+      } else {
+        log.error("Non-Axios error during publish", {
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+          postId,
+        });
+      }
+
       const errorMsg = error instanceof Error ? error.message : String(error);
 
       post.status = PostStatus.FAILED;
       post.error = errorMsg;
+      post.publishingProgress = {
+        status: "failed",
+        startedAt: post.publishingProgress?.startedAt,
+        completedAt: new Date(),
+        currentStep: post.publishingProgress?.currentStep,
+        error: errorMsg,
+      };
       await post.save();
+
+      log.error(`📊 [${postId}] Publishing failed`, { error: errorMsg });
 
       return {
         success: false,
@@ -145,19 +222,89 @@ export class PostService {
   }
 
   /**
-   * Schedule post for publishing
+   * Get publishing progress for a post
    */
-  async schedulePost(postId: string, scheduledAt: Date): Promise<IPost> {
-    if (scheduledAt <= new Date()) {
+  async getPublishingProgress(postId: string) {
+    const post = await this.getPost(postId);
+    return post.publishingProgress;
+  }
+
+  /**
+   * Schedule post for publishing with flexible patterns
+   */
+  async schedulePost(postId: string, config: ScheduleConfig): Promise<IPost> {
+    console.log(`\n📅 PostService.schedulePost() called:`);
+    console.log(`   Post ID: ${postId}`);
+    console.log(`   Config:`, config);
+
+    if (config.scheduledAt <= new Date()) {
+      console.log(`❌ Scheduled time is not in the future`);
       throw new Error("Scheduled time must be in the future");
     }
 
     const post = await this.getPost(postId);
+    console.log(`   Found post: "${post.content.substring(0, 40)}..."`);
+
     this.validatePostForPublishing(post);
+    console.log(`✅ Post validation passed`);
 
     post.status = PostStatus.SCHEDULED;
-    post.scheduledAt = scheduledAt;
-    return post.save();
+    post.scheduledAt = config.scheduledAt;
+    post.scheduleConfig = config;
+
+    const savedPost = await post.save();
+    console.log(`✅ Post saved with status: ${savedPost.status}`);
+    console.log(`   Scheduled At: ${savedPost.scheduledAt?.toISOString()}`);
+    console.log(`   Schedule Config:`, savedPost.scheduleConfig);
+
+    return savedPost;
+  }
+
+  /**
+   * Get next scheduled publish time for recurring patterns
+   */
+  private getNextScheduleTime(config: ScheduleConfig): Date {
+    const now = new Date();
+    const nextRun = new Date(config.scheduledAt);
+    const [hours, minutes] = (config.time || "09:00").split(":").map(Number);
+
+    switch (config.pattern) {
+      case SchedulePattern.ONCE:
+        return config.scheduledAt;
+
+      case SchedulePattern.WEEKLY: {
+        const daysOfWeek = config.daysOfWeek || [1]; // Default: Monday
+        while (nextRun <= now || !daysOfWeek.includes(nextRun.getDay())) {
+          nextRun.setDate(nextRun.getDate() + 1);
+        }
+        nextRun.setHours(hours, minutes, 0, 0);
+        return nextRun;
+      }
+
+      case SchedulePattern.MONTHLY: {
+        const dayOfMonth = config.dayOfMonth || 1;
+        nextRun.setDate(dayOfMonth);
+        nextRun.setHours(hours, minutes, 0, 0);
+        if (nextRun <= now) {
+          nextRun.setMonth(nextRun.getMonth() + 1);
+        }
+        return nextRun;
+      }
+
+      case SchedulePattern.DATE_RANGE: {
+        nextRun.setHours(hours, minutes, 0, 0);
+        if (nextRun <= now && config.endDate && config.endDate > now) {
+          // Set for next occurrence within range
+          nextRun.setDate(nextRun.getDate() + 1);
+        }
+        return nextRun <= (config.endDate || new Date(2099, 11, 31))
+          ? nextRun
+          : new Date(2099, 11, 31);
+      }
+
+      default:
+        return config.scheduledAt;
+    }
   }
 
   /**

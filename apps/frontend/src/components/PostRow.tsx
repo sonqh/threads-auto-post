@@ -4,6 +4,7 @@ import React from "react";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { TableCell, TableRow as TableRowComponent } from "./ui/table";
+import { ProgressSpinner } from "./ProgressSpinner";
 import type { Post, PostStatusType } from "@/types";
 
 interface PostRowProps {
@@ -24,6 +25,8 @@ const getStatusBadge = (status: PostStatusType) => {
   switch (status) {
     case "DRAFT":
       return `${baseClasses} bg-gray-100 text-gray-800`;
+    case "PUBLISHING":
+      return `${baseClasses} bg-yellow-100 text-yellow-800`;
     case "SCHEDULED":
       return `${baseClasses} bg-blue-100 text-blue-800`;
     case "PUBLISHED":
@@ -76,9 +79,26 @@ export const PostRow: React.FC<PostRowProps> = ({
       </TableCell>
 
       <TableCell>
-        <span className={getStatusBadge(post.status as PostStatusType)}>
-          {post.status}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className={getStatusBadge(post.status as PostStatusType)}>
+            {post.status}
+          </span>
+          {post.status === "PUBLISHING" && post.publishingProgress && (
+            <ProgressSpinner
+              isActive={true}
+              currentStep={post.publishingProgress.currentStep}
+              size="sm"
+            />
+          )}
+          {post.status === "FAILED" && post.error && (
+            <div
+              title={post.error}
+              className="w-4 h-4 rounded-full bg-red-100 flex items-center justify-center"
+            >
+              <span className="text-xs font-bold text-red-600">!</span>
+            </div>
+          )}
+        </div>
       </TableCell>
 
       <TableCell>
@@ -87,20 +107,9 @@ export const PostRow: React.FC<PostRowProps> = ({
 
       <TableCell>
         {post.imageUrls && post.imageUrls.length > 0 ? (
-          <div className="text-xs text-gray-600">
-            {post.imageUrls.map((url, idx) => (
-              <a
-                key={idx}
-                href={url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="block truncate max-w-[150px] hover:text-blue-600"
-                title={url}
-              >
-                Link {idx + 1}
-              </a>
-            ))}
-          </div>
+          <span className="text-sm text-gray-700 font-medium">
+            {post.imageUrls.length} {post.imageUrls.length === 1 ? "link" : "links"}
+          </span>
         ) : (
           <span className="text-sm text-gray-400">-</span>
         )}

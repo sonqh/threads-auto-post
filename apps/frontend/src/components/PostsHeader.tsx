@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { Button } from "./ui/button";
-import { Input } from "./ui/input";
+import { SchedulerModal } from "./SchedulerModal";
+import { type ScheduleConfig } from "@/types";
 
 interface PostsHeaderProps {
   selectedCount: number;
   onSelectAll: (selected: boolean) => void;
   onBulkDelete: (ids: string[]) => void;
-  onBulkSchedule: (ids: string[], scheduledAt: Date) => void;
+  onBulkSchedule: (ids: string[], config: ScheduleConfig) => void;
   selectedIds: string[];
 }
 
@@ -17,14 +18,11 @@ export const PostsHeader = ({
   onBulkSchedule,
   selectedIds,
 }: PostsHeaderProps) => {
-  const [showScheduleModal, setShowScheduleModal] = useState(false);
-  const [scheduledAt, setScheduledAt] = useState<string>("");
+  const [showSchedulerModal, setShowSchedulerModal] = useState(false);
 
-  const handleSchedule = () => {
-    if (!scheduledAt) return;
-    onBulkSchedule(selectedIds, new Date(scheduledAt));
-    setScheduledAt("");
-    setShowScheduleModal(false);
+  const handleSchedulerSubmit = (config: ScheduleConfig) => {
+    onBulkSchedule(selectedIds, config);
+    setShowSchedulerModal(false);
   };
 
   return (
@@ -47,7 +45,7 @@ export const PostsHeader = ({
             <Button
               size="sm"
               variant="outline"
-              onClick={() => setShowScheduleModal(true)}
+              onClick={() => setShowSchedulerModal(true)}
             >
               Schedule {selectedCount}
             </Button>
@@ -66,31 +64,11 @@ export const PostsHeader = ({
         )}
       </div>
 
-      {showScheduleModal && (
-        <div className="border-t pt-4 space-y-3">
-          <label className="block text-sm font-medium">Schedule for:</label>
-          <Input
-            type="datetime-local"
-            value={scheduledAt}
-            onChange={(e) => setScheduledAt(e.target.value)}
-          />
-          <div className="flex gap-2">
-            <Button size="sm" onClick={handleSchedule} disabled={!scheduledAt}>
-              Confirm
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                setShowScheduleModal(false);
-                setScheduledAt("");
-              }}
-            >
-              Cancel
-            </Button>
-          </div>
-        </div>
-      )}
+      <SchedulerModal
+        isOpen={showSchedulerModal}
+        onClose={() => setShowSchedulerModal(false)}
+        onSchedule={handleSchedulerSubmit}
+      />
     </div>
   );
 };

@@ -1,9 +1,12 @@
 import { format } from "date-fns";
 import { Download } from "lucide-react";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { usePostList, useThreadsPublish } from "../hooks";
 import { PostsHeader } from "./PostsHeader";
 import { PostsTable } from "./PostsTable";
+import { EditPostModal } from "./EditPostModal";
+import { SchedulerModal } from "./SchedulerModal";
+import { Pagination } from "./Pagination";
 import { Button } from "./ui/button";
 import {
   Card,
@@ -12,63 +15,108 @@ import {
   CardHeader,
   CardTitle,
 } from "./ui/card";
-import { PostStatus, type Post, type PostStatusType } from "@/types";
+import { PostStatus, type Post, type PostStatusType, type ScheduleConfig } from "@/types";
 import { LinksModal } from "./LinksModal";
 
-export const PostsList: React.FC = () => {
-  const { posts, loading, fetchPosts, deletePost, bulkDelete } = usePostList();
-  const { publish, schedulePost, cancelSchedule, publishing } =
-    useThreadsPublish();
+const STATUS_FILTERS = ["" as const, ...Object.values(PostStatus)] as const;
 
+export const PostsList: React.FC = () => {
+  const { posts, loading, total, page, limit, setLimit, fetchPosts, deletePost, bulkDelete, updatePost } = usePostList();
+  const { publish, schedulePost, cancelSchedule, publishing } = useThreadsPublish();
+
+  // UI State
   const [selectedStatus, setSelectedStatus] = useState<PostStatusType | "">("");
   const [selectedPosts, setSelectedPosts] = useState<Set<string>>(new Set());
+  const [pageSize, setPageSize] = useState(limit);
+  
+  // Modal State
   const [showLinksModal, setShowLinksModal] = useState(false);
   const [linksModalPost, setLinksModalPost] = useState<Post | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingPost, setEditingPost] = useState<Post | null>(null);
+  const [showSchedulerModal, setShowSchedulerModal] = useState(false);
+  const [schedulingPostId, setSchedulingPostId] = useState<string | null>(null);
 
-  // Load posts on mount and when filters change
+  // Calculate pagination
+  const totalPages = Math.ceil(total / pageSize);
+
+  // Load posts when filters or pagination change
   useEffect(() => {
-    fetchPosts(selectedStatus || undefined);
-  }, [selectedStatus, fetchPosts]);
+    fetchPosts(selectedStatus || undefined, page);
+  }, [selectedStatus, page, fetchPosts]);
 
-  const handleSelectPost = (id: string) => {
-    const newSelected = new Set(selectedPosts);
-    if (newSelected.has(id)) {
-      newSelected.delete(id);
-    } else {
-      newSelected.add(id);
+  // Reset to first page when status filter changes
+  useEffect(() => {
+    if (page !== 0) {
+      fetchPosts(selectedStatus || undefined, 0);
     }
-    setSelectedPosts(newSelected);
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedStatus]);
 
-  const handleSelectAll = (selected: boolean) => {
+  // Handlers - Selection
+  const handleSelectPost = useCallback((id: string) => {
+    setSelectedPosts((prev) => {
+      const newSelected = new Set(prev);
+      if (newSelected.has(id)) {
+        newSelected.delete(id);
+      } else {
+        newSelected.add(id);
+      }
+      return newSelected;
+    });
+  }, []);
+
+  const handleSelectAll = useCallback((selected: boolean) => {
     if (selected) {
       setSelectedPosts(new Set(posts.map((p) => p._id)));
     } else {
       setSelectedPosts(new Set());
     }
-  };
+  }, [posts]);
 
-  const handleBulkDelete = async (ids: string[]) => {
+  // Handlers - Bulk Actions
+  const handleBulkDelete = useCallback(async (ids: string[]) => {
+    if (!confirm(`Are you sure you want to delete ${ids.length} post(s)?`)) {
+      return;
+    }
+    
     try {
       await bulkDelete(ids);
       setSelectedPosts(new Set());
+      await fetchPosts(selectedStatus || undefined, page);
     } catch (error) {
       console.error("Failed to delete posts:", error);
+      alert("Failed to delete posts. Please try again.");
     }
-  };
+  }, [bulkDelete, fetchPosts, selectedStatus, page]);
 
-  const handleDeletePost = async (id: string) => {
+  const handleBulkSchedule = useCallback(async (ids: string[], config: ScheduleConfig) => {
+    try {
+      for (const id of ids) {
+        await schedulePost(id, config);
+      }
+      setSelectedPosts(new Set());
+      await fetchPosts(selectedStatus || undefined, page);
+    } catch (error) {
+      console.error("Failed to schedule posts:", error);
+      alert("Failed to schedule posts. Please try again.");
+    }
+  }, [schedulePost, fetchPosts, selectedStatus, page]);
+
+  // Handlers - Single Post Actions
+  const handleDeletePost = useCallback(async (id: string) => {
     if (!confirm("Are you sure you want to delete this post?")) return;
+    
     try {
       await deletePost(id);
+      await fetchPosts(selectedStatus || undefined, page);
     } catch (error) {
       console.error("Failed to delete post:", error);
+      alert("Failed to delete post. Please try again.");
     }
-  };
+  }, [deletePost, fetchPosts, selectedStatus, page]);
 
-  const handlePublish = async (postId: string) => {
+  const handlePublish = useCallback(async (postId: string) => {
     const post = posts.find((p) => p._id === postId);
     if (!post) return;
 
@@ -76,89 +124,92 @@ export const PostsList: React.FC = () => {
 
     try {
       await publish(postId, post);
-      await fetchPosts(selectedStatus || undefined);
+      await fetchPosts(selectedStatus || undefined, page);
     } catch (error) {
       console.error("Failed to publish:", error);
+      alert("Failed to publish post. Please try again.");
     }
-  };
+  }, [posts, publish, fetchPosts, selectedStatus, page]);
 
-  const handleSchedule = async (postId: string) => {
-    const scheduledAtStr = prompt(
-      "Enter scheduled time (e.g., 2024-01-01T12:00:00)"
-    );
-    if (!scheduledAtStr) return;
+  const handleSchedule = useCallback((postId: string) => {
+    setSchedulingPostId(postId);
+    setShowSchedulerModal(true);
+  }, []);
 
-    try {
-      await schedulePost(postId, new Date(scheduledAtStr));
-      await fetchPosts(selectedStatus || undefined);
-    } catch (error) {
-      console.error("Failed to schedule:", error);
-    }
-  };
+  const handleSchedulerSubmit = useCallback(
+    async (config: ScheduleConfig) => {
+      if (!schedulingPostId) return;
+      try {
+        console.log("🎯 PostsList: Schedule submitted");
+        console.log(`   Post ID: ${schedulingPostId}`);
+        console.log(`   Config:`, config);
+        
+        await schedulePost(schedulingPostId, config);
+        console.log("✅ PostsList: Schedule API success");
+        
+        await fetchPosts(selectedStatus || undefined, page);
+        setShowSchedulerModal(false);
+        setSchedulingPostId(null);
+      } catch (error) {
+        console.error("❌ PostsList: Failed to schedule:", error);
+        alert("Failed to schedule post. Please try again.");
+      }
+    },
+    [schedulingPostId, schedulePost, fetchPosts, selectedStatus, page]
+  );
 
-  const handleCancel = async (postId: string) => {
+  const handleCancel = useCallback(async (postId: string) => {
     try {
       await cancelSchedule(postId);
-      await fetchPosts(selectedStatus || undefined);
+      await fetchPosts(selectedStatus || undefined, page);
     } catch (error) {
       console.error("Failed to cancel schedule:", error);
+      alert("Failed to cancel schedule. Please try again.");
     }
-  };
+  }, [cancelSchedule, fetchPosts, selectedStatus, page]);
 
-  const handleBulkSchedule = async (ids: string[], scheduledAt: Date) => {
-    try {
-      for (const id of ids) {
-        await schedulePost(id, scheduledAt);
-      }
-      setSelectedPosts(new Set());
-      await fetchPosts(selectedStatus || undefined);
-    } catch (error) {
-      console.error("Failed to schedule posts:", error);
-    }
-  };
-
-  const handleEditPost = (post: Post) => {
+  // Handlers - Edit Modal
+  const handleEditPost = useCallback((post: Post) => {
     setEditingPost(post);
     setShowEditModal(true);
-  };
+  }, []);
 
-  const handleSavePost = async (updatedPost: Partial<Post>) => {
+  const handleSavePost = useCallback(async (updatedPost: Partial<Post>) => {
     if (!editingPost) return;
 
-    try {
-      const response = await fetch(`/api/posts/${editingPost._id}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(updatedPost),
-      });
+    await updatePost(editingPost._id, updatedPost);
+    setShowEditModal(false);
+    setEditingPost(null);
+    await fetchPosts(selectedStatus || undefined, page);
+  }, [editingPost, updatePost, fetchPosts, selectedStatus, page]);
 
-      if (!response.ok) {
-        throw new Error("Failed to update post");
-      }
+  const handleCloseEditModal = useCallback(() => {
+    setShowEditModal(false);
+    setEditingPost(null);
+  }, []);
 
-      // Close modal
-      setShowEditModal(false);
-      setEditingPost(null);
+  // Handlers - Pagination
+  const handlePageChange = useCallback((newPage: number) => {
+    fetchPosts(selectedStatus || undefined, newPage);
+  }, [fetchPosts, selectedStatus]);
 
-      // Refresh posts list
-      await fetchPosts(selectedStatus || undefined);
-    } catch (error) {
-      console.error("Failed to save post:", error);
-      alert("Failed to update post. Please try again.");
-    }
-  };
+  const handlePageSizeChange = useCallback((newSize: number) => {
+    setPageSize(newSize);
+    setLimit(newSize);
+    fetchPosts(selectedStatus || undefined, 0, newSize);
+  }, [fetchPosts, selectedStatus, setLimit]);
 
-  const exportToCSV = () => {
+  // Export functionality
+  const exportToCSV = useCallback(() => {
     const csv = [
-      ["Content", "Type", "Status", "Topic", "Links", "Scheduled"],
+      ["Content", "Type", "Status", "Topic", "Links", "Comment", "Scheduled"],
       ...posts.map((p) => [
         p.content,
         p.postType,
         p.status,
         p.topic || "",
-        p.imageUrls.length,
+        p.imageUrls?.length || 0,
+        p.comment || "",
         p.scheduledAt
           ? format(new Date(p.scheduledAt), "yyyy-MM-dd HH:mm")
           : "",
@@ -176,7 +227,7 @@ export const PostsList: React.FC = () => {
     a.download = `posts-${format(new Date(), "yyyy-MM-dd-HHmmss")}.csv`;
     a.click();
     window.URL.revokeObjectURL(url);
-  };
+  }, [posts]);
 
   return (
     <Card>
@@ -184,17 +235,24 @@ export const PostsList: React.FC = () => {
         <div className="flex items-center justify-between">
           <div>
             <CardTitle>Posts</CardTitle>
-            <CardDescription>Manage your Threads posts</CardDescription>
+            <CardDescription>
+              Manage your Threads posts ({total} total)
+            </CardDescription>
           </div>
-          <Button size="sm" variant="outline" onClick={exportToCSV}>
+          <Button 
+            size="sm" 
+            variant="outline" 
+            onClick={exportToCSV}
+            disabled={posts.length === 0}
+          >
             <Download className="h-4 w-4 mr-2" />
             Export
           </Button>
         </div>
 
         {/* Status Filter Tabs */}
-        <div className="flex gap-2 mt-4">
-          {["" as const, ...Object.values(PostStatus)].map((status) => (
+        <div className="flex gap-2 mt-4 flex-wrap">
+          {STATUS_FILTERS.map((status) => (
             <Button
               key={status || "all"}
               variant={selectedStatus === status ? "default" : "outline"}
@@ -208,9 +266,19 @@ export const PostsList: React.FC = () => {
       </CardHeader>
 
       <CardContent className="space-y-4">
-        {loading ? (
-          <div className="text-center py-8 text-muted-foreground">
+        {loading && page === 0 ? (
+          <div className="text-center py-12 text-muted-foreground">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mx-auto mb-4"></div>
             Loading posts...
+          </div>
+        ) : posts.length === 0 ? (
+          <div className="text-center py-12 text-muted-foreground">
+            <p>No posts found</p>
+            {selectedStatus && (
+              <p className="text-sm mt-2">
+                Try changing the filter or create a new post
+              </p>
+            )}
           </div>
         ) : (
           <>
@@ -237,10 +305,20 @@ export const PostsList: React.FC = () => {
                 new Set(Object.keys(publishing).filter((id) => publishing[id]))
               }
             />
+
+            {/* Pagination */}
+            <Pagination
+              currentPage={page}
+              totalPages={totalPages}
+              totalItems={total}
+              pageSize={pageSize}
+              onPageChange={handlePageChange}
+              onPageSizeChange={handlePageSizeChange}
+            />
           </>
         )}
 
-        {/* Links Modal */}
+        {/* Links Modal - Legacy, can be removed if not used */}
         {showLinksModal && linksModalPost && (
           <LinksModal
             post={linksModalPost}
@@ -249,7 +327,6 @@ export const PostsList: React.FC = () => {
               setLinksModalPost(null);
             }}
             onSave={(links) => {
-              // Update post with new links
               console.log("Save links:", links);
               setShowLinksModal(false);
               setLinksModalPost(null);
@@ -259,104 +336,22 @@ export const PostsList: React.FC = () => {
 
         {/* Edit Post Modal */}
         {showEditModal && editingPost && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold">Edit Post</h2>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setShowEditModal(false);
-                    setEditingPost(null);
-                  }}
-                >
-                  ×
-                </Button>
-              </div>
-
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Content
-                  </label>
-                  <textarea
-                    className="w-full p-3 border rounded-lg resize-none"
-                    rows={4}
-                    defaultValue={editingPost.content}
-                    id="edit-content"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Topic
-                  </label>
-                  <input
-                    type="text"
-                    className="w-full p-3 border rounded-lg"
-                    defaultValue={editingPost.topic || ""}
-                    id="edit-topic"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium mb-2">
-                    Status
-                  </label>
-                  <select
-                    className="w-full p-3 border rounded-lg"
-                    defaultValue={editingPost.status}
-                    id="edit-status"
-                  >
-                    <option value={PostStatus.DRAFT}>Draft</option>
-                    <option value={PostStatus.SCHEDULED}>Scheduled</option>
-                    <option value={PostStatus.PUBLISHED}>Published</option>
-                  </select>
-                </div>
-
-                <div className="flex gap-2 pt-4">
-                  <Button
-                    onClick={() => {
-                      const content = (
-                        document.getElementById(
-                          "edit-content"
-                        ) as HTMLTextAreaElement
-                      )?.value;
-                      const topic = (
-                        document.getElementById(
-                          "edit-topic"
-                        ) as HTMLInputElement
-                      )?.value;
-                      const status = (
-                        document.getElementById(
-                          "edit-status"
-                        ) as HTMLSelectElement
-                      )?.value;
-
-                      handleSavePost({
-                        content,
-                        topic,
-                        status: status as PostStatusType,
-                      });
-                    }}
-                  >
-                    Save Changes
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setShowEditModal(false);
-                      setEditingPost(null);
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
+          <EditPostModal
+            post={editingPost}
+            onClose={handleCloseEditModal}
+            onSave={handleSavePost}
+          />
         )}
+
+        {/* Scheduler Modal */}
+        <SchedulerModal
+          isOpen={showSchedulerModal}
+          onClose={() => {
+            setShowSchedulerModal(false);
+            setSchedulingPostId(null);
+          }}
+          onSchedule={handleSchedulerSubmit}
+        />
       </CardContent>
     </Card>
   );

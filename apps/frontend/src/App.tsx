@@ -1,5 +1,7 @@
 import { ExcelImporter } from "./components/ExcelImporter";
+import { JobMonitoring } from "./components/JobMonitoring";
 import { PostsList } from "./components/PostsList";
+import { SchedulerDebug } from "./components/SchedulerDebug";
 import { FileText } from "lucide-react";
 
 function App() {
@@ -20,7 +22,11 @@ function App() {
       <main className="container mx-auto px-4 py-8 space-y-8">
         <ExcelImporter />
         <PostsList />
+        <JobMonitoring />
       </main>
+
+      {/* Debug Panel */}
+      <SchedulerDebug />
     </div>
   );
 }

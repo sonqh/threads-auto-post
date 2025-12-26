@@ -8,6 +8,7 @@ export interface PublishPostData {
   mediaUrls?: string[];
   videoUrl?: string;
   comment?: string; // Optional comment to post after the main post
+  progressCallback?: (step: string) => void; // Optional callback to track progress
 }
 
 export interface PublishResult {

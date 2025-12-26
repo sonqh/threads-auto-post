@@ -1,5 +1,4 @@
 import { useState } from "react";
-
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import {
@@ -11,6 +10,7 @@ import {
 } from "./ui/card";
 import { Trash2, Plus, AlertCircle, CheckCircle2 } from "lucide-react";
 import type { Post } from "@/types";
+import { isValidUrl, validateLink } from "@/lib/linkValidation";
 
 interface LinksModalProps {
   post: Post;
@@ -22,20 +22,15 @@ export const LinksModal = ({ post, onClose, onSave }: LinksModalProps) => {
   const [links, setLinks] = useState<string[]>(post.imageUrls || []);
   const [errors, setErrors] = useState<Record<number, string>>({});
 
-  const isValidUrl = (url: string): boolean => {
-    if (!url.trim()) return false;
-    try {
-      new URL(url);
-      return true;
-    } catch {
-      return false;
-    }
-  };
-
-  const validateLink = (index: number, url: string) => {
+  const validateLinkAtIndex = (index: number, url: string) => {
     const newErrors = { ...errors };
-    if (url.trim() && !isValidUrl(url)) {
-      newErrors[index] = "Invalid URL format";
+    if (url.trim()) {
+      const validation = validateLink(url);
+      if (!validation.valid && validation.error) {
+        newErrors[index] = validation.error;
+      } else {
+        delete newErrors[index];
+      }
     } else {
       delete newErrors[index];
     }
@@ -46,7 +41,7 @@ export const LinksModal = ({ post, onClose, onSave }: LinksModalProps) => {
     const newLinks = [...links];
     newLinks[index] = value;
     setLinks(newLinks);
-    validateLink(index, value);
+    validateLinkAtIndex(index, value);
   };
 
   const handleAddLink = () => {

@@ -8,17 +8,22 @@ export const usePostList = (initialStatus?: PostStatusType) => {
   const [error, setError] = useState<string | null>(null);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
-  const [limit] = useState(50);
+  const [limit, setLimit] = useState(50);
 
   const fetchPosts = useCallback(
-    async (status?: PostStatusType | string, pageNum = 0) => {
+    async (
+      status?: PostStatusType | string,
+      pageNum = 0,
+      pageLimit?: number
+    ) => {
       setLoading(true);
       setError(null);
       try {
+        const finalLimit = pageLimit ?? limit;
         const result = await postsApi.getPosts({
           status,
-          limit,
-          skip: pageNum * limit,
+          limit: finalLimit,
+          skip: pageNum * finalLimit,
         });
         console.log("result == ", result);
         setPosts(result.posts);
@@ -101,6 +106,7 @@ export const usePostList = (initialStatus?: PostStatusType) => {
     total,
     page,
     limit,
+    setLimit,
     fetchPosts,
     refetch,
     deletePost,
