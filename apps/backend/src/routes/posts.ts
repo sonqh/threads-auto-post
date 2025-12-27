@@ -43,6 +43,65 @@ router.get("/:id", async (req, res) => {
   }
 });
 
+// Fix specific stuck PUBLISHING post
+router.post("/:id/fix-stuck", async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+    if (!post) {
+      return res.status(404).json({ error: "Post not found" });
+    }
+
+    if (post.status !== PostStatus.PUBLISHING) {
+      return res.json({
+        success: false,
+        message: `Post is not stuck (current status: ${post.status})`,
+        post,
+      });
+    }
+
+    // Check if post was actually published (has threadsPostId)
+    if (post.threadsPostId) {
+      // Post was published successfully, just update the status
+      post.status = PostStatus.PUBLISHED;
+      post.error = undefined;
+      post.publishingProgress = {
+        status: "published",
+        completedAt: new Date(),
+        currentStep: "Published successfully (recovered from stuck state)",
+      };
+      await post.save();
+
+      return res.json({
+        success: true,
+        message:
+          "Fixed! Post has threadsPostId - marked as PUBLISHED (was actually published)",
+        post,
+      });
+    } else {
+      // Post has no threadsPostId, so publishing failed
+      post.status = PostStatus.FAILED;
+      post.error = "Publishing timed out - worker stopped responding";
+      post.publishingProgress = {
+        status: "failed",
+        completedAt: new Date(),
+        currentStep: "Publishing failed",
+        error: "Worker stopped responding",
+      };
+      await post.save();
+
+      return res.json({
+        success: true,
+        message:
+          "Fixed! Post has no threadsPostId - marked as FAILED (publishing likely failed)",
+        post,
+      });
+    }
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    res.status(500).json({ error: message });
+  }
+});
+
 // Create post
 router.post("/", async (req, res) => {
   try {
@@ -446,6 +505,72 @@ router.post("/:id/retry", async (req, res) => {
         ? "Post reset to SCHEDULED - will retry automatically"
         : "Post reset to DRAFT - edit and publish manually",
       post,
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    res.status(500).json({ error: message });
+  }
+});
+
+// Fix stuck PUBLISHING posts (cleanup utility)
+router.post("/fix/stuck-publishing", async (req, res) => {
+  try {
+    // Find all posts stuck in PUBLISHING status for more than 5 minutes
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+    const stuckPosts = await Post.find({
+      status: PostStatus.PUBLISHING,
+      updatedAt: { $lt: fiveMinutesAgo },
+    });
+
+    if (stuckPosts.length === 0) {
+      return res.json({
+        success: true,
+        message: "No stuck posts found",
+        fixed: [],
+      });
+    }
+
+    const fixed = [];
+    for (const post of stuckPosts) {
+      // Check if post actually has a threadsPostId (meaning it was published successfully)
+      if (post.threadsPostId) {
+        // Post was published successfully, just update the status
+        post.status = PostStatus.PUBLISHED;
+        post.error = undefined;
+        post.publishingProgress = {
+          status: "published",
+          completedAt: new Date(),
+          currentStep: "Published successfully (recovered)",
+        };
+        fixed.push({
+          _id: post._id,
+          reason: "Post has threadsPostId - was published successfully",
+          action: "Updated to PUBLISHED",
+        });
+      } else {
+        // Post failed to publish, mark as failed
+        post.status = PostStatus.FAILED;
+        post.error = "Publishing timed out (worker stopped responding)";
+        post.publishingProgress = {
+          status: "failed",
+          completedAt: new Date(),
+          currentStep: "Publishing failed",
+          error: "Worker stopped responding",
+        };
+        fixed.push({
+          _id: post._id,
+          reason: "No threadsPostId - publishing likely failed",
+          action: "Updated to FAILED",
+        });
+      }
+      await post.save();
+    }
+
+    res.json({
+      success: true,
+      message: `Fixed ${fixed.length} stuck post(s)`,
+      fixed,
+      stuckCount: stuckPosts.length,
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Unknown error";

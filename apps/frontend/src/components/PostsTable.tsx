@@ -18,6 +18,8 @@ interface PostsTableProps {
   onSchedule: (postId: string) => void;
   onCancel: (postId: string) => void;
   onDelete: (postId: string) => void;
+  onFixStuck?: (postId: string) => void;
+  onPostRecovered?: (post: Post) => void;
   publishingIds?: Set<string>;
 }
 
@@ -30,6 +32,8 @@ export const PostsTable = ({
   onSchedule,
   onCancel,
   onDelete,
+  onFixStuck,
+  onPostRecovered,
   publishingIds,
 }: PostsTableProps) => {
   const allSelected = posts.length > 0 && selectedIds.size === posts.length;
@@ -81,6 +85,8 @@ export const PostsTable = ({
             onSchedule={onSchedule}
             onCancel={onCancel}
             onDelete={onDelete}
+            onFixStuck={onFixStuck}
+            onPostRecovered={onPostRecovered}
             publishing={publishingIds?.has(post._id)}
           />
         ))}

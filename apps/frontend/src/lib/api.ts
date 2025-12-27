@@ -188,6 +188,15 @@ export const postsApi = {
     const response = await axios.post(`${API_BASE_URL}/posts/${id}/retry`);
     return response.data;
   },
+
+  async fixStuckPost(id: string): Promise<{
+    success: boolean;
+    message: string;
+    post: Post;
+  }> {
+    const response = await axios.post(`${API_BASE_URL}/posts/${id}/fix-stuck`);
+    return response.data;
+  },
 };
 
 export const monitoringApi = {

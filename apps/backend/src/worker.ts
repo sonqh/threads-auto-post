@@ -193,16 +193,44 @@ const worker = new Worker(
             currentStep: "Published successfully",
           };
 
-          await post.save();
+          // Save with retry logic to ensure status update persists
+          let saveAttempts = 0;
+          let saveFailed = false;
+          while (saveAttempts < 3) {
+            try {
+              await post.save();
+              log.success(
+                ` Post ${postId} published successfully: ${result.platformPostId}`
+              );
+              return {
+                success: true,
+                platformPostId: result.platformPostId,
+                commentStatus: post.commentStatus,
+              };
+            } catch (saveError) {
+              saveAttempts++;
+              const errorMsg =
+                saveError instanceof Error
+                  ? saveError.message
+                  : "Unknown error";
+              log.warn(
+                `Failed to save post status (attempt ${saveAttempts}/3): ${errorMsg}`
+              );
+              if (saveAttempts < 3) {
+                // Wait before retrying
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+              }
+            }
+          }
 
-          log.success(
-            ` Post ${postId} published successfully: ${result.platformPostId}`
+          // If we get here, all save attempts failed
+          saveFailed = true;
+          log.error(
+            `Failed to save published post status after 3 attempts. Post has threadsPostId: ${result.platformPostId}`
           );
-          return {
-            success: true,
-            platformPostId: result.platformPostId,
-            commentStatus: post.commentStatus,
-          };
+          throw new Error(
+            "Post published successfully but failed to update database status"
+          );
         } else {
           throw new Error(result.error || "Unknown error");
         }

@@ -193,6 +193,25 @@ export const PostsList: React.FC = () => {
 
       try {
         await publish(postId, post);
+
+        // Wait a bit for the backend to process, then poll for updated status
+        let attempts = 0;
+        const maxAttempts = 15; // 15 attempts = ~7.5 seconds max wait
+
+        while (attempts < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 500)); // Wait 500ms
+
+          const result = await postsApi.getPost(postId);
+          if (result.status === "PUBLISHED" || result.status === "FAILED") {
+            // Post is done processing, refresh the list
+            await fetchPosts(selectedStatus || undefined, page);
+            return;
+          }
+
+          attempts++;
+        }
+
+        // Timeout - just refresh anyway
         await fetchPosts(selectedStatus || undefined, page);
       } catch (error) {
         console.error("Failed to publish:", error);
@@ -200,6 +219,29 @@ export const PostsList: React.FC = () => {
       }
     },
     [posts, publish, fetchPosts, selectedStatus, page]
+  );
+
+  const handleFixStuck = useCallback(
+    async (postId: string) => {
+      try {
+        await postsApi.fixStuckPost(postId);
+        // Refresh the posts list
+        await fetchPosts(selectedStatus || undefined, page);
+        alert("Post fixed! Status updated.");
+      } catch (error) {
+        console.error("Failed to fix stuck post:", error);
+        alert("Failed to fix stuck post. Please try again.");
+      }
+    },
+    [fetchPosts, selectedStatus, page]
+  );
+
+  const handlePostRecovered = useCallback(
+    (_post: Post) => {
+      // Refetch the list after recovery - the post parameter tells us which post was recovered
+      fetchPosts(selectedStatus || undefined, page);
+    },
+    [fetchPosts, selectedStatus, page]
   );
 
   const handleSchedule = useCallback((postId: string) => {
@@ -385,6 +427,8 @@ export const PostsList: React.FC = () => {
               onSchedule={handleSchedule}
               onCancel={handleCancel}
               onDelete={handleDeletePost}
+              onFixStuck={handleFixStuck}
+              onPostRecovered={handlePostRecovered}
               publishingIds={
                 new Set(Object.keys(publishing).filter((id) => publishing[id]))
               }
