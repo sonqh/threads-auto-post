@@ -7,7 +7,9 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "worker": "tsx watch src/worker.ts"
+    "worker": "tsx watch src/worker.ts",
+    "test": "vitest",
+    "test:run": "vitest run"
   },
   "dependencies": {
     "axios": "^1.7.9",
@@ -29,7 +31,9 @@
     "@types/express": "^5.0.0",
     "@types/multer": "^1.4.12",
     "@types/node": "^24.10.1",
+    "@vitest/ui": "^1.0.4",
     "tsx": "^4.19.2",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^1.0.4"
   }
 }

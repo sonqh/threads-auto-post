@@ -327,6 +327,25 @@ export class ThreadsService {
   /**
    * Extract error message from various error types
    */
+  /**
+   * Generate OAuth authorization URL
+   */
+  getOAuthUrl(redirectUri: string): string {
+    const clientId = process.env.THREADS_CLIENT_ID;
+    if (!clientId) {
+      throw new Error("THREADS_CLIENT_ID is not configured");
+    }
+
+    const params = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      response_type: "code",
+      scope: "threads_basic_access,threads_manage_metadata",
+    });
+
+    return `https://threads.net/oauth/authorize?${params.toString()}`;
+  }
+
   private extractErrorMessage(error: unknown): string {
     if (axios.isAxiosError(error)) {
       return (

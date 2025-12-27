@@ -332,3 +332,20 @@ export const excelApi = {
     return response.data;
   },
 };
+
+// Aggregated API client for use in components
+export const api = {
+  get: (path: string, config?: any) =>
+    axios.get(`${API_BASE_URL}${path}`, config),
+  post: (path: string, data?: any, config?: any) =>
+    axios.post(`${API_BASE_URL}${path}`, data, config),
+  put: (path: string, data?: any, config?: any) =>
+    axios.put(`${API_BASE_URL}${path}`, data, config),
+  patch: (path: string, data?: any, config?: any) =>
+    axios.patch(`${API_BASE_URL}${path}`, data, config),
+  delete: (path: string, config?: any) =>
+    axios.delete(`${API_BASE_URL}${path}`, config),
+  ...postsApi,
+  ...monitoringApi,
+  ...excelApi,
+};

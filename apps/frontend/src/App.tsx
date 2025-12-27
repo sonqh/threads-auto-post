@@ -2,16 +2,19 @@ import { useState, useEffect } from "react";
 import { ExcelImporter } from "./components/ExcelImporter";
 import { JobMonitoring } from "./components/JobMonitoring";
 import { PostsList } from "./components/PostsList";
-import { FileText, Activity } from "lucide-react";
+import { CredentialsPage } from "./pages/CredentialsPage";
+import { FileText, Activity, Key } from "lucide-react";
 
-type TabType = "posts" | "control";
+type TabType = "posts" | "control" | "settings";
 
 function App() {
   const [activeTab, setActiveTab] = useState<TabType>(() => {
     // Read tab from URL on mount
     const params = new URLSearchParams(window.location.search);
     const tabParam = params.get("tab");
-    return tabParam === "control" || tabParam === "posts" ? tabParam : "posts";
+    return (
+      tabParam === "control" || tabParam === "settings" ? tabParam : "posts"
+    ) as TabType;
   });
 
   // Update URL when tab changes
@@ -64,6 +67,19 @@ function App() {
                 Control Center
               </span>
             </button>
+            <button
+              onClick={() => setActiveTab("settings")}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === "settings"
+                  ? "border-blue-600 text-blue-600"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                <Key size={16} />
+                Settings
+              </span>
+            </button>
           </div>
         </div>
       </header>
@@ -79,6 +95,9 @@ function App() {
 
         {/* Control Center Tab */}
         {activeTab === "control" && <JobMonitoring />}
+
+        {/* Settings Tab */}
+        {activeTab === "settings" && <CredentialsPage />}
       </main>
 
       {/* Debug Panel */}

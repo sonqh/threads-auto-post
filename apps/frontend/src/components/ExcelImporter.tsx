@@ -60,8 +60,15 @@ export const ExcelImporter: React.FC<{ onImportComplete?: () => void }> = ({
     try {
       const response = await excelApi.checkDuplicates(file);
       if (response.duplicates && response.duplicates.length > 0) {
-        // Show duplicates modal
-        setDuplicateGroups(response.duplicates);
+        // Transform API response to match state type
+        const transformed = response.duplicates.map((dup: any) => ({
+          index: dup.rowIndex ?? dup.index ?? 0,
+          matches: dup.matches || [],
+          description: dup.description,
+          topic: dup.topic,
+          imageUrls: dup.imageUrls,
+        }));
+        setDuplicateGroups(transformed);
         setShowDuplicateModal(true);
       } else {
         // No duplicates, proceed with import

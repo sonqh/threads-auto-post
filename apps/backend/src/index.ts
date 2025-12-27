@@ -10,6 +10,7 @@ import { connectDatabase } from "./config/database.js";
 import { appConfig } from "./config/env.js";
 import { log } from "./config/logger.js";
 import credentialsRouter from "./routes/credentials.js";
+import { accountsRouter } from "./routes/accounts.js";
 import excelRouter from "./routes/excel.js";
 import postsRouter from "./routes/posts.js";
 
@@ -25,6 +26,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use("/api/posts", postsRouter);
 app.use("/api/excel", excelRouter);
 app.use("/api/credentials", credentialsRouter);
+app.use("/api/accounts", accountsRouter);
 
 // Health check
 app.get("/health", (req, res) => {

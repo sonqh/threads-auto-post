@@ -7,6 +7,12 @@ export enum CredentialStatus {
 }
 
 export interface IThreadsCredential extends Document {
+  // User ownership (MULTI-ACCOUNT SUPPORT)
+  userId: string; // Reference to app user
+  accountName: string; // User-friendly account name (e.g., "Brand Main", "Creator Account")
+  accountDescription?: string; // Optional description
+  isDefault: boolean; // Mark as default account for user
+
   // OAuth credentials
   clientId: string;
   clientSecret: string; // Should be encrypted in DB
@@ -39,6 +45,28 @@ export interface IThreadsCredential extends Document {
 
 const ThreadsCredentialSchema = new Schema<IThreadsCredential>(
   {
+    // User ownership (MULTI-ACCOUNT SUPPORT)
+    userId: {
+      type: String,
+      required: true,
+      index: true,
+      description: "Reference to app user",
+    },
+    accountName: {
+      type: String,
+      required: true,
+      description: "User-friendly account name (e.g., Brand Main)",
+    },
+    accountDescription: {
+      type: String,
+      description: "Optional description of the account",
+    },
+    isDefault: {
+      type: Boolean,
+      default: false,
+      description: "Whether this is the default account for the user",
+    },
+
     clientId: { type: String, required: true, index: true },
     clientSecret: { type: String, required: true }, // Should be encrypted
     redirectUri: { type: String, required: true },
@@ -68,10 +96,12 @@ const ThreadsCredentialSchema = new Schema<IThreadsCredential>(
   }
 );
 
-// Indexes
+// Indexes for multi-account queries
+ThreadsCredentialSchema.index({ userId: 1, createdAt: -1 });
+ThreadsCredentialSchema.index({ userId: 1, isDefault: 1 });
+ThreadsCredentialSchema.index({ userId: 1, status: 1 });
 ThreadsCredentialSchema.index({ status: 1 });
 ThreadsCredentialSchema.index({ expiresAt: 1 });
-ThreadsCredentialSchema.index({ createdAt: -1 });
 
 export const ThreadsCredential = mongoose.model<IThreadsCredential>(
   "ThreadsCredential",

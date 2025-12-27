@@ -55,6 +55,12 @@ export interface IPost extends Document {
   imageUrls: string[]; // Link ảnh 1-10
   mergeLinks?: string; // Gộp Link
 
+  // Multi-account support
+  userId?: string; // App user who created this post
+  threadsAccountId?: string; // Which Threads account to post to
+  threadsAccountName?: string; // Account name for reference
+  bulkPostId?: string; // Group multiple posts to different accounts
+
   // Scheduling
   scheduledAt?: Date;
   scheduleConfig?: ScheduleConfig; // Flexible schedule pattern
@@ -130,6 +136,13 @@ const PostSchema = new Schema<IPost>(
     videoUrl: { type: String },
     imageUrls: { type: [String], default: [] },
     mergeLinks: { type: String },
+
+    // Multi-account fields
+    userId: { type: String, index: true },
+    threadsAccountId: { type: mongoose.Schema.Types.ObjectId, index: true },
+    threadsAccountName: { type: String },
+    bulkPostId: { type: String, index: true },
+
     scheduledAt: { type: Date },
     scheduleConfig: {
       pattern: {
@@ -183,5 +196,8 @@ PostSchema.index({ status: 1, scheduledAt: 1 });
 PostSchema.index({ threadsPostId: 1 });
 PostSchema.index({ contentHash: 1, publishedAt: 1 }); // For duplicate detection
 PostSchema.index({ "executionLock.expiresAt": 1 }); // For lock cleanup
+PostSchema.index({ userId: 1, createdAt: -1 }); // For user's posts
+PostSchema.index({ threadsAccountId: 1, status: 1 }); // For account-specific posts
+PostSchema.index({ bulkPostId: 1 }); // For grouped posts
 
 export const Post = mongoose.model<IPost>("Post", PostSchema);

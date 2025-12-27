@@ -24,10 +24,11 @@ interface AppConfig {
     clientId: string;
     clientSecret: string;
     redirectUri: string;
-    userId: string;
-    accessToken: string;
-    refreshToken?: string;
     apiVersion: string;
+    // Legacy support: default account credentials (optional)
+    defaultUserId?: string;
+    defaultAccessToken?: string;
+    defaultRefreshToken?: string;
   };
   file: {
     maxSize: number;
@@ -75,10 +76,11 @@ export const loadConfig = (): AppConfig => {
       redirectUri:
         process.env.THREADS_REDIRECT_URI ||
         "http://localhost:3001/api/credentials/callback",
-      userId: process.env.THREADS_USER_ID || "",
-      accessToken: process.env.THREADS_ACCESS_TOKEN || "",
-      refreshToken: process.env.THREADS_REFRESH_TOKEN,
       apiVersion: process.env.THREADS_API_VERSION || "v1.0",
+      // Legacy: optional default account for backward compatibility
+      defaultUserId: process.env.THREADS_USER_ID,
+      defaultAccessToken: process.env.THREADS_ACCESS_TOKEN,
+      defaultRefreshToken: process.env.THREADS_REFRESH_TOKEN,
     },
     file: {
       maxSize: parseInt(process.env.MAX_FILE_SIZE || "10485760", 10),
@@ -131,18 +133,25 @@ function validateConfig(config: AppConfig): void {
     errors.push("Invalid REDIS_PORT: must be between 1 and 65535");
   }
 
-  // Warn if Threads credentials are not set (but don't fail)
+  // Warn if Threads OAuth credentials are not set
   if (!config.threads.clientId || !config.threads.clientSecret) {
     console.warn(
-      "THREADS_CLIENT_ID and THREADS_CLIENT_SECRET are not configured. " +
-        "OAuth flow will not work. Set them in .env file."
+      "⚠️  THREADS_CLIENT_ID and THREADS_CLIENT_SECRET are not configured. " +
+        "OAuth flow will not work. Users will need to manually enter credentials " +
+        "or use legacy mode with THREADS_ACCESS_TOKEN."
     );
   }
 
-  if (!config.threads.userId || !config.threads.accessToken) {
-    console.warn(
-      "THREADS_USER_ID and THREADS_ACCESS_TOKEN are not configured. " +
-        "Some features will not work without them."
+  // Info: multi-account setup
+  if (config.threads.defaultUserId && config.threads.defaultAccessToken) {
+    console.info(
+      "✅ Legacy account credentials detected. This account will be " +
+        "available as the default account on startup."
+    );
+  } else {
+    console.info(
+      "ℹ️  Multi-account mode: Credentials are managed via the Settings UI. " +
+        "Users can link multiple Threads accounts through the application."
     );
   }
 

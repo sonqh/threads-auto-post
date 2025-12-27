@@ -90,6 +90,19 @@ export const usePostList = (initialStatus?: PostStatusType) => {
           data.updatedAt instanceof Date
             ? data.updatedAt.toISOString()
             : data.updatedAt,
+        publishingProgress: data.publishingProgress
+          ? {
+              ...data.publishingProgress,
+              startedAt:
+                data.publishingProgress.startedAt instanceof Date
+                  ? data.publishingProgress.startedAt.toISOString()
+                  : data.publishingProgress.startedAt,
+              completedAt:
+                data.publishingProgress.completedAt instanceof Date
+                  ? data.publishingProgress.completedAt.toISOString()
+                  : data.publishingProgress.completedAt,
+            }
+          : undefined,
       };
       const updated = await postsApi.updatePost(id, apiData);
       setPosts((prev) => prev.map((p) => (p._id === id ? updated : p)));
