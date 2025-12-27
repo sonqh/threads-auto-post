@@ -1,5 +1,5 @@
 import { format } from "date-fns";
-import { Download } from "lucide-react";
+import { Download, ArrowUp, ArrowDown } from "lucide-react";
 import React, { useEffect, useState, useCallback } from "react";
 import { usePostList, useThreadsPublish } from "../hooks";
 import { PostsHeader } from "./PostsHeader";
@@ -44,9 +44,23 @@ export const PostsList: React.FC = () => {
     useThreadsPublish();
 
   // UI State
-  const [selectedStatus, setSelectedStatus] = useState<PostStatusType | "">("");
+  const [selectedStatus, setSelectedStatus] = useState<PostStatusType | "">(
+    () => {
+      // Read status from URL on mount
+      const params = new URLSearchParams(window.location.search);
+      const statusParam = params.get("status");
+      return statusParam &&
+        Object.values(PostStatus).includes(statusParam as PostStatusType)
+        ? (statusParam as PostStatusType)
+        : "";
+    }
+  );
   const [selectedPosts, setSelectedPosts] = useState<Set<string>>(new Set());
   const [pageSize, setPageSize] = useState(limit);
+  const [sortBy, setSortBy] = useState<
+    "createdAt" | "scheduledAt" | "publishedAt"
+  >("createdAt");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
 
   // Modal State
   const [showLinksModal, setShowLinksModal] = useState(false);
@@ -65,8 +79,20 @@ export const PostsList: React.FC = () => {
     fetchPosts(selectedStatus || undefined, page);
   }, [selectedStatus, page, fetchPosts]);
 
-  // Reset to first page when status filter changes
+  // Update URL and reset to first page when status filter changes
   useEffect(() => {
+    // Update URL with status parameter
+    const params = new URLSearchParams(window.location.search);
+    if (selectedStatus) {
+      params.set("status", selectedStatus);
+    } else {
+      params.delete("status");
+    }
+    const newUrl = `${window.location.pathname}${
+      params.toString() ? "?" + params.toString() : ""
+    }`;
+    window.history.replaceState({}, "", newUrl);
+
     if (page !== 0) {
       fetchPosts(selectedStatus || undefined, 0);
     }
@@ -96,6 +122,53 @@ export const PostsList: React.FC = () => {
     },
     [posts]
   );
+
+  // Handler for sorting
+  const handleSort = useCallback(
+    (field: "createdAt" | "scheduledAt" | "publishedAt") => {
+      if (sortBy === field) {
+        // Toggle direction if same field
+        setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+      } else {
+        // New field, default to descending (newest first)
+        setSortBy(field);
+        setSortDirection("desc");
+      }
+    },
+    [sortBy]
+  );
+
+  // Sort posts in memory
+  const sortedPosts = useCallback(() => {
+    return [...posts].sort((a, b) => {
+      let aVal: string | Date | undefined;
+      let bVal: string | Date | undefined;
+
+      if (sortBy === "createdAt") {
+        aVal = a.createdAt;
+        bVal = b.createdAt;
+      } else if (sortBy === "scheduledAt") {
+        aVal = a.scheduledAt;
+        bVal = b.scheduledAt;
+      } else if (sortBy === "publishedAt") {
+        // Use updatedAt as a proxy for published time
+        aVal = a.status === "PUBLISHED" ? a.updatedAt : undefined;
+        bVal = b.status === "PUBLISHED" ? b.updatedAt : undefined;
+      }
+
+      // Handle undefined values - put them at the end
+      if (!aVal && !bVal) return 0;
+      if (!aVal) return 1;
+      if (!bVal) return -1;
+
+      const aTime =
+        aVal instanceof Date ? aVal.getTime() : new Date(aVal).getTime();
+      const bTime =
+        bVal instanceof Date ? bVal.getTime() : new Date(bVal).getTime();
+      const comparison = aTime - bTime;
+      return sortDirection === "asc" ? comparison : -comparison;
+    });
+  }, [posts, sortBy, sortDirection])();
 
   // Handlers - Bulk Actions
   const handleBulkDelete = useCallback(
@@ -417,9 +490,53 @@ export const PostsList: React.FC = () => {
               onBulkScheduleRandom={() => setShowBulkSchedulerModal(true)}
             />
 
+            {/* Sorting Controls */}
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-muted-foreground">Sort by:</span>
+              <Button
+                variant={sortBy === "createdAt" ? "default" : "outline"}
+                size="sm"
+                onClick={() => handleSort("createdAt")}
+              >
+                Created
+                {sortBy === "createdAt" &&
+                  (sortDirection === "asc" ? (
+                    <ArrowUp className="ml-1 h-3 w-3" />
+                  ) : (
+                    <ArrowDown className="ml-1 h-3 w-3" />
+                  ))}
+              </Button>
+              <Button
+                variant={sortBy === "scheduledAt" ? "default" : "outline"}
+                size="sm"
+                onClick={() => handleSort("scheduledAt")}
+              >
+                Scheduled
+                {sortBy === "scheduledAt" &&
+                  (sortDirection === "asc" ? (
+                    <ArrowUp className="ml-1 h-3 w-3" />
+                  ) : (
+                    <ArrowDown className="ml-1 h-3 w-3" />
+                  ))}
+              </Button>
+              <Button
+                variant={sortBy === "publishedAt" ? "default" : "outline"}
+                size="sm"
+                onClick={() => handleSort("publishedAt")}
+              >
+                Published
+                {sortBy === "publishedAt" &&
+                  (sortDirection === "asc" ? (
+                    <ArrowUp className="ml-1 h-3 w-3" />
+                  ) : (
+                    <ArrowDown className="ml-1 h-3 w-3" />
+                  ))}
+              </Button>
+            </div>
+
             {/* Posts Table */}
             <PostsTable
-              posts={posts}
+              posts={sortedPosts}
               selectedIds={selectedPosts}
               onSelectPost={handleSelectPost}
               onEditPost={handleEditPost}

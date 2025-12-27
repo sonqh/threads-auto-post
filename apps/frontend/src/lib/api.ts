@@ -62,6 +62,7 @@ export interface JobRecord {
   timestamp?: number;
   processedOn?: number;
   finishedOn?: number;
+  scheduledAt?: number;
 }
 
 export const postsApi = {
@@ -235,6 +236,7 @@ export const monitoringApi = {
     completed: JobRecord[];
     failed: JobRecord[];
     delayed: JobRecord[];
+    scheduled: JobRecord[];
   }> {
     const response = await axios.get(
       `${API_BASE_URL}/posts/monitoring/jobs/recent`,

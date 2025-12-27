@@ -27,6 +27,7 @@ interface JobRecord {
   timestamp?: number;
   processedOn?: number;
   finishedOn?: number;
+  scheduledAt?: number;
 }
 
 interface RecentJobsData {
@@ -34,6 +35,7 @@ interface RecentJobsData {
   completed: JobRecord[];
   failed: JobRecord[];
   delayed: JobRecord[];
+  scheduled: JobRecord[];
 }
 
 interface HealthData {
@@ -131,10 +133,21 @@ const JobDetailsModal: React.FC<JobDetailsModalProps> = ({
 
           {/* Timing Info */}
           <div className="border-t pt-4 grid grid-cols-3 gap-4">
+            {job.scheduledAt && (
+              <div>
+                <p className="text-xs font-semibold text-muted-foreground">
+                  Scheduled For
+                </p>
+                <p className="text-sm flex items-center gap-1">
+                  <Clock size={14} className="text-blue-500" />
+                  {new Date(job.scheduledAt).toLocaleString()}
+                </p>
+              </div>
+            )}
             {job.timestamp && (
               <div>
                 <p className="text-xs font-semibold text-muted-foreground">
-                  Scheduled
+                  Created
                 </p>
                 <p className="text-sm">
                   {new Date(job.timestamp).toLocaleString()}
@@ -328,6 +341,9 @@ export const JobMonitoring: React.FC = () => {
         : postData.content
       : "No content";
 
+    const scheduledTime = job.scheduledAt ? new Date(job.scheduledAt) : null;
+    const isScheduled = job.state === "delayed" && scheduledTime;
+
     return (
       <div
         className="p-3 border rounded-lg hover:bg-gray-50 cursor-pointer transition-colors flex items-center justify-between group"
@@ -348,10 +364,16 @@ export const JobMonitoring: React.FC = () => {
             {contentPreview}
           </p>
           <p className="text-xs text-muted-foreground mt-1">
-            {job.attemptsMade > 0 &&
-              `Attempt ${job.attemptsMade}/${job.maxAttempts}`}
-            {job.timestamp &&
-              ` • ${new Date(job.timestamp).toLocaleTimeString()}`}
+            {isScheduled ? (
+              <span className="flex items-center gap-1">
+                <Clock size={12} />
+                Scheduled: {scheduledTime.toLocaleString()}
+              </span>
+            ) : (
+              job.timestamp && (
+                <span>Added: {new Date(job.timestamp).toLocaleString()}</span>
+              )
+            )}
           </p>
         </div>
 
@@ -533,9 +555,20 @@ export const JobMonitoring: React.FC = () => {
               >
                 {tab === "overview" && "Overview"}
                 {tab === "active" &&
-                  `Running (${recentJobs?.active?.length || 0})`}
+                  (() => {
+                    const count =
+                      (recentJobs?.active?.length || 0) +
+                      (recentJobs?.delayed?.length || 0) +
+                      (recentJobs?.scheduled?.length || 0);
+                    return `Running (${count})`;
+                  })()}
                 {tab === "scheduled" &&
-                  `Scheduled (${recentJobs?.delayed?.length || 0})`}
+                  (() => {
+                    const count =
+                      (recentJobs?.delayed?.length || 0) +
+                      (recentJobs?.scheduled?.length || 0);
+                    return `Scheduled (${count})`;
+                  })()}
                 {tab === "completed" &&
                   `Completed (${recentJobs?.completed?.length || 0})`}
                 {tab === "failed" &&
@@ -601,23 +634,37 @@ export const JobMonitoring: React.FC = () => {
                   Quick Actions
                 </p>
                 <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    onClick={() => setActiveTab("active")}
-                    disabled={stats.activeJobs === 0}
-                  >
-                    <Zap size={14} />
-                    View Running ({stats.activeJobs})
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={() => setActiveTab("scheduled")}
-                    disabled={stats.delayedJobs === 0}
-                    variant="outline"
-                  >
-                    <Clock size={14} />
-                    View Scheduled ({stats.delayedJobs})
-                  </Button>
+                  {(() => {
+                    const activeCount =
+                      (stats?.activeJobs || 0) +
+                      (stats?.delayedJobs || 0) +
+                      (recentJobs?.scheduled?.length || 0);
+                    const scheduledCount =
+                      (stats?.delayedJobs || 0) +
+                      (recentJobs?.scheduled?.length || 0);
+
+                    return (
+                      <>
+                        <Button
+                          size="sm"
+                          onClick={() => setActiveTab("active")}
+                          disabled={activeCount === 0}
+                        >
+                          <Zap size={14} />
+                          View Active ({activeCount})
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={() => setActiveTab("scheduled")}
+                          disabled={scheduledCount === 0}
+                          variant="outline"
+                        >
+                          <Clock size={14} />
+                          View Scheduled ({scheduledCount})
+                        </Button>
+                      </>
+                    );
+                  })()}
                   <Button
                     size="sm"
                     onClick={() => setActiveTab("failed")}
@@ -632,17 +679,48 @@ export const JobMonitoring: React.FC = () => {
             </div>
           )}
 
-          {/* Running Jobs Tab */}
+          {/* Active Jobs Tab (Running + Scheduled) */}
           {activeTab === "active" && (
             <div className="space-y-2 max-h-96 overflow-y-auto">
-              {!recentJobs?.active || recentJobs.active.length === 0 ? (
+              {(!recentJobs?.active || recentJobs.active.length === 0) &&
+              (!recentJobs?.delayed || recentJobs.delayed.length === 0) &&
+              (!recentJobs?.scheduled || recentJobs.scheduled.length === 0) ? (
                 <p className="text-center text-muted-foreground py-8">
-                  No jobs running
+                  No active or scheduled jobs
                 </p>
               ) : (
-                recentJobs.active.map((job) => (
-                  <JobRow key={job.id} job={job} />
-                ))
+                <>
+                  {recentJobs?.active && recentJobs.active.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold text-muted-foreground mb-2 px-3">
+                        Running Now
+                      </p>
+                      {recentJobs.active.map((job) => (
+                        <JobRow key={job.id} job={job} />
+                      ))}
+                    </div>
+                  )}
+                  {recentJobs?.delayed && recentJobs.delayed.length > 0 && (
+                    <div className="mt-4">
+                      <p className="text-xs font-semibold text-muted-foreground mb-2 px-3">
+                        In Queue (Delayed)
+                      </p>
+                      {recentJobs.delayed.map((job) => (
+                        <JobRow key={job.id} job={job} />
+                      ))}
+                    </div>
+                  )}
+                  {recentJobs?.scheduled && recentJobs.scheduled.length > 0 && (
+                    <div className="mt-4">
+                      <p className="text-xs font-semibold text-muted-foreground mb-2 px-3">
+                        Scheduled in Database
+                      </p>
+                      {recentJobs.scheduled.map((job) => (
+                        <JobRow key={job.id} job={job} />
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -650,14 +728,34 @@ export const JobMonitoring: React.FC = () => {
           {/* Scheduled Jobs Tab */}
           {activeTab === "scheduled" && (
             <div className="space-y-2 max-h-96 overflow-y-auto">
-              {!recentJobs?.delayed || recentJobs.delayed.length === 0 ? (
+              {(!recentJobs?.delayed || recentJobs.delayed.length === 0) &&
+              (!recentJobs?.scheduled || recentJobs.scheduled.length === 0) ? (
                 <p className="text-center text-muted-foreground py-8">
-                  No scheduled jobs
+                  No scheduled posts
                 </p>
               ) : (
-                recentJobs.delayed.map((job) => (
-                  <JobRow key={job.id} job={job} />
-                ))
+                <>
+                  {recentJobs?.delayed && recentJobs.delayed.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold text-muted-foreground mb-2 px-3">
+                        In Queue (Delayed)
+                      </p>
+                      {recentJobs.delayed.map((job) => (
+                        <JobRow key={job.id} job={job} />
+                      ))}
+                    </div>
+                  )}
+                  {recentJobs?.scheduled && recentJobs.scheduled.length > 0 && (
+                    <div className="mt-4">
+                      <p className="text-xs font-semibold text-muted-foreground mb-2 px-3">
+                        Scheduled in Database ({recentJobs.scheduled.length})
+                      </p>
+                      {recentJobs.scheduled.map((job) => (
+                        <JobRow key={job.id} job={job} />
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}

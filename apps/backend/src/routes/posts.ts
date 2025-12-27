@@ -370,8 +370,35 @@ router.get("/monitoring/health", async (req, res) => {
 router.get("/monitoring/jobs/recent", async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit) || 50, 100);
-    const jobs = await monitoringService.getRecentJobs(limit);
-    res.json(jobs);
+    const [jobs, scheduledPosts] = await Promise.all([
+      monitoringService.getRecentJobs(limit),
+      monitoringService.getScheduledPosts(limit),
+    ]);
+
+    // Convert scheduled posts to job-like format for consistency
+    const scheduledJobsFromDB = scheduledPosts.map((post) => ({
+      id: `scheduled-${post._id}`,
+      name: "scheduled-post",
+      state: "scheduled",
+      data: {
+        postId: post._id,
+        content: post.content,
+      },
+      progress: 0,
+      attemptsMade: 0,
+      maxAttempts: 3,
+      timestamp: post.createdAt
+        ? new Date(post.createdAt).getTime()
+        : Date.now(),
+      scheduledAt: post.scheduledAt
+        ? new Date(post.scheduledAt).getTime()
+        : undefined,
+    }));
+
+    res.json({
+      ...jobs,
+      scheduled: scheduledJobsFromDB,
+    });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Unknown error";
     res.status(500).json({ error: message });

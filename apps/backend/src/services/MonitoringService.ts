@@ -1,4 +1,5 @@
 import { postQueue } from "../queue/postQueue.js";
+import { Post, PostStatus, type IPost } from "../models/Post.js";
 
 export interface JobStats {
   totalJobs: number;
@@ -58,9 +59,12 @@ export class MonitoringService {
     const state = await job.getState();
     const jobProgress = (job as any).progress;
     const progress = typeof jobProgress === "number" ? jobProgress : 0;
-    const scheduledAt = (job as any).delay
-      ? Date.now() + (job as any).delay
-      : undefined;
+
+    // For delayed jobs, calculate the scheduled time as timestamp + delay
+    let scheduledAt: number | undefined;
+    if (state === "delayed" && (job as any).delay && job.timestamp) {
+      scheduledAt = job.timestamp + (job as any).delay;
+    }
 
     return {
       id: job.id!,
@@ -90,9 +94,13 @@ export class MonitoringService {
     return jobs.map((job) => {
       const jobProgress = (job as any).progress;
       const progress = typeof jobProgress === "number" ? jobProgress : 0;
-      const scheduledAt = (job as any).delay
-        ? Date.now() + (job as any).delay
-        : undefined;
+
+      // For delayed jobs, calculate the scheduled time as timestamp + delay
+      let scheduledAt: number | undefined;
+      if (state === "delayed" && (job as any).delay && job.timestamp) {
+        scheduledAt = job.timestamp + (job as any).delay;
+      }
+
       return {
         id: job.id!,
         name: job.name,
@@ -128,6 +136,15 @@ export class MonitoringService {
     ]);
 
     return { active, completed, failed, delayed };
+  }
+
+  /**
+   * Get scheduled posts from database (not yet in queue)
+   */
+  async getScheduledPosts(limit: number = 50): Promise<IPost[]> {
+    return Post.find({ status: PostStatus.SCHEDULED })
+      .sort({ scheduledAt: 1 })
+      .limit(limit);
   }
 
   /**

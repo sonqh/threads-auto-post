@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ExcelImporter } from "./components/ExcelImporter";
 import { JobMonitoring } from "./components/JobMonitoring";
 import { PostsList } from "./components/PostsList";
@@ -7,7 +7,20 @@ import { FileText, Activity } from "lucide-react";
 type TabType = "posts" | "control";
 
 function App() {
-  const [activeTab, setActiveTab] = useState<TabType>("posts");
+  const [activeTab, setActiveTab] = useState<TabType>(() => {
+    // Read tab from URL on mount
+    const params = new URLSearchParams(window.location.search);
+    const tabParam = params.get("tab");
+    return tabParam === "control" || tabParam === "posts" ? tabParam : "posts";
+  });
+
+  // Update URL when tab changes
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    params.set("tab", activeTab);
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+    window.history.replaceState({}, "", newUrl);
+  }, [activeTab]);
 
   return (
     <div className="min-h-screen bg-background">
