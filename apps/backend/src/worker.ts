@@ -10,6 +10,7 @@ import {
 } from "./models/Post.js";
 import { ThreadsAdapter } from "./adapters/ThreadsAdapter.js";
 import { schedulerService } from "./services/SchedulerService.js";
+import { eventDrivenScheduler } from "./services/EventDrivenScheduler.js";
 import { idempotencyService } from "./services/IdempotencyService.js";
 import { log } from "./config/logger.js";
 
@@ -388,13 +389,50 @@ worker.on("completed", (job) => {
   log.success(` Job ${job.id} COMPLETED for post: ${postId}`);
 });
 
+// ===== SCHEDULER WORKER =====
+// Separate worker for the scheduler meta-queue
+const schedulerWorker = new Worker(
+  "scheduler-meta",
+  async (job) => {
+    log.info(`⏰ Scheduler check triggered: ${job.id}`);
+    await eventDrivenScheduler.processDuePosts();
+    return { success: true, checkedAt: new Date().toISOString() };
+  },
+  {
+    connection,
+    concurrency: 1, // Only one scheduler check at a time
+    limiter: {
+      max: 10,
+      duration: 1000, // Max 10 checks per second
+    },
+  }
+);
+
+schedulerWorker.on("completed", (job) => {
+  log.success(`✅ Scheduler check ${job.id} completed`);
+});
+
+schedulerWorker.on("failed", (job, err) => {
+  log.error(`❌ Scheduler check ${job?.id} failed:`, {
+    error: err.message,
+  });
+});
+
 const startWorker = async () => {
   try {
     await connectDatabase();
     log.success("🚀 Worker is running...");
 
-    // Start the scheduler for scheduled posts
-    schedulerService.start();
+    // Choose which scheduler to use based on environment variable
+    const useEventDriven = process.env.USE_EVENT_DRIVEN_SCHEDULER === "true";
+
+    if (useEventDriven) {
+      log.info("🎯 Using EVENT-DRIVEN scheduler");
+      await eventDrivenScheduler.initialize();
+    } else {
+      log.info("🕐 Using POLLING scheduler (legacy)");
+      schedulerService.start();
+    }
   } catch (error) {
     log.error("Failed to start worker:", {
       error: error instanceof Error ? error.message : String(error),

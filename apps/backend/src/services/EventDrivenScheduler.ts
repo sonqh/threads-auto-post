@@ -1,0 +1,489 @@
+import {
+  Post,
+  PostStatus,
+  SchedulePattern,
+  CommentStatus,
+  generateContentHash,
+} from "../models/Post.js";
+import { postQueue } from "../queue/postQueue.js";
+import {
+  schedulerQueue,
+  getNextExecutionAt,
+  setNextExecutionAt,
+  getActiveSchedulerJobId,
+  setActiveSchedulerJobId,
+  clearSchedulerState,
+} from "../queue/schedulerQueue.js";
+import { idempotencyService } from "./IdempotencyService.js";
+import { log } from "../config/logger.js";
+
+const SCHEDULER_JOB_NAME = "check-due-posts";
+const BATCH_WINDOW_MS = 5000; // Execute all posts due within 5 seconds
+
+/**
+ * Event-driven scheduler that only runs when posts are due
+ * No polling - uses BullMQ delayed jobs and event triggers
+ */
+export class EventDrivenScheduler {
+  private isInitialized = false;
+
+  /**
+   * Initialize scheduler on server startup
+   */
+  async initialize(): Promise<void> {
+    if (this.isInitialized) {
+      log.warn("Event-driven scheduler already initialized");
+      return;
+    }
+
+    log.success("╔════════════════════════════════════════════╗");
+    log.success("║    🚀 EVENT-DRIVEN SCHEDULER STARTING      ║");
+    log.success("║  Zero-polling, Redis-backed scheduling    ║");
+    log.success("╚════════════════════════════════════════════╝");
+
+    // Restore scheduler state from Redis
+    await this.restoreSchedulerState();
+
+    this.isInitialized = true;
+    log.success("✅ Event-driven scheduler initialized");
+  }
+
+  /**
+   * Restore scheduler state after restart
+   * This ensures no scheduled posts are missed
+   */
+  private async restoreSchedulerState(): Promise<void> {
+    try {
+      log.info("🔄 Restoring scheduler state from Redis...");
+
+      // Check if there's an active scheduler job
+      const activeJobId = await getActiveSchedulerJobId();
+      const nextExecAt = await getNextExecutionAt();
+
+      if (activeJobId) {
+        const job = await schedulerQueue.getJob(activeJobId);
+
+        if (job && (await job.getState()) === "delayed") {
+          log.info(`✓ Found active scheduler job: ${activeJobId}`);
+          log.info(
+            `  Next execution: ${new Date(nextExecAt || 0).toISOString()}`
+          );
+          return;
+        }
+
+        // Job doesn't exist or isn't delayed - recreate it
+        log.warn("⚠️  Scheduler job missing or in wrong state, recreating...");
+      }
+
+      // Find next scheduled post
+      await this.scheduleNextCheck();
+    } catch (error) {
+      log.error("Failed to restore scheduler state:", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      // Fallback: schedule a check immediately
+      await this.scheduleImmediateCheck();
+    }
+  }
+
+  /**
+   * Main method: Process all posts that are due now
+   * This is called by the BullMQ worker when the delayed job executes
+   */
+  async processDuePosts(): Promise<void> {
+    try {
+      const now = new Date();
+      const windowEnd = new Date(now.getTime() + BATCH_WINDOW_MS);
+
+      log.info("═".repeat(60));
+      log.info(`🔍 SCHEDULER CHECK - ${now.toISOString()}`);
+
+      // Find all posts due within the batch window
+      const duePosts = await Post.find({
+        status: PostStatus.SCHEDULED,
+        scheduledAt: {
+          $lte: windowEnd, // Posts scheduled up to windowEnd (now + 5s)
+        },
+      }).sort({ scheduledAt: 1 });
+
+      if (duePosts.length === 0) {
+        log.info("✓ No posts due in this window");
+      } else {
+        log.success(`📬 Found ${duePosts.length} post(s) to process`);
+
+        for (const post of duePosts) {
+          await this.processPost(post);
+        }
+      }
+
+      // Schedule next check based on upcoming posts
+      await this.scheduleNextCheck();
+
+      log.info("═".repeat(60));
+    } catch (error) {
+      log.error("Error processing due posts:", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      // On error, schedule next check in 60 seconds as fallback
+      await this.scheduleCheckAt(new Date(Date.now() + 60000));
+    }
+  }
+
+  /**
+   * Process a single scheduled post
+   */
+  private async processPost(post: any): Promise<void> {
+    try {
+      const isRecurring =
+        post.scheduleConfig?.pattern &&
+        ["WEEKLY", "MONTHLY", "DATE_RANGE"].includes(
+          post.scheduleConfig.pattern
+        );
+
+      const postPreview = post.content.substring(0, 40).replace(/\n/g, " ");
+      log.info(`📌 ${post._id}: "${postPreview}..."`);
+
+      if (isRecurring) {
+        // For recurring posts, publish and reschedule
+        await this.handleRecurringPost(post);
+      } else {
+        // For one-time posts, publish once
+        await this.handleOneTimePost(post);
+      }
+    } catch (error) {
+      log.error(`Failed to process post ${post._id}:`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * Handle one-time scheduled post
+   */
+  private async handleOneTimePost(post: any): Promise<void> {
+    // Generate idempotency key
+    const idempotencyKey = idempotencyService.generateIdempotencyKey(
+      post._id.toString(),
+      post.scheduledAt
+    );
+
+    // Check if already processed
+    if (post.idempotencyKey === idempotencyKey) {
+      log.info(`  ⏭️  Already queued (${idempotencyKey})`);
+      return;
+    }
+
+    // Generate content hash for duplicate detection
+    post.contentHash = generateContentHash(
+      post.content,
+      post.imageUrls,
+      post.videoUrl
+    );
+
+    // Initialize comment status
+    if (post.comment?.trim()) {
+      post.commentStatus = CommentStatus.PENDING;
+    } else {
+      post.commentStatus = CommentStatus.NONE;
+    }
+
+    // Create job ID
+    const jobId = `scheduled-${post._id}-${
+      post.scheduledAt?.getTime() || Date.now()
+    }`;
+
+    try {
+      // Add to publishing queue
+      await postQueue.add(
+        "publish-post",
+        { postId: post._id },
+        {
+          jobId,
+          attempts: 3,
+          backoff: {
+            type: "exponential",
+            delay: 5000,
+          },
+          removeOnComplete: { age: 86400 },
+          removeOnFail: { age: 604800 },
+        }
+      );
+
+      // Update post status
+      post.jobId = jobId;
+      post.idempotencyKey = idempotencyKey;
+      post.status = PostStatus.PUBLISHING;
+      post.publishingProgress = {
+        status: "publishing",
+        startedAt: new Date(),
+        currentStep: "Queued for publishing...",
+      };
+      await post.save();
+
+      log.success(`  ✅ Queued (${jobId})`);
+    } catch (queueError: any) {
+      if (queueError.message?.includes("already exists")) {
+        log.info(`  ⏭️  Job already exists in queue`);
+      } else {
+        throw queueError;
+      }
+    }
+  }
+
+  /**
+   * Handle recurring scheduled post
+   */
+  private async handleRecurringPost(post: any): Promise<void> {
+    const nextRunTime = this.getNextScheduleTime(post.scheduleConfig);
+    const now = new Date();
+
+    if (nextRunTime > now) {
+      log.info(`  ⏰ Not due yet, next: ${nextRunTime.toISOString()}`);
+      return;
+    }
+
+    // Time to publish
+    const jobId = `scheduled-${post._id}-${Date.now()}`;
+
+    try {
+      await postQueue.add("publish-post", { postId: post._id }, { jobId });
+
+      // Update status and schedule next run
+      post.jobId = jobId;
+      post.status = PostStatus.PUBLISHING;
+      post.publishingProgress = {
+        status: "publishing",
+        startedAt: new Date(),
+        currentStep: "Queued for publishing (recurring)...",
+      };
+      post.scheduledAt = nextRunTime;
+      await post.save();
+
+      log.success(
+        `  ✅ Queued (recurring), next: ${nextRunTime.toISOString()}`
+      );
+    } catch (queueError: any) {
+      if (queueError.message?.includes("already exists")) {
+        log.info(`  ⏭️  Job already exists`);
+      } else {
+        throw queueError;
+      }
+    }
+  }
+
+  /**
+   * Calculate next run time for recurring posts
+   */
+  private getNextScheduleTime(config: any): Date {
+    const now = new Date();
+    const nextRun = new Date(config.scheduledAt);
+    const [hours, minutes] = (config.time || "09:00").split(":").map(Number);
+
+    switch (config.pattern) {
+      case SchedulePattern.ONCE:
+        return config.scheduledAt;
+
+      case SchedulePattern.WEEKLY: {
+        const daysOfWeek = config.daysOfWeek || [1];
+        nextRun.setDate(nextRun.getDate() + 1);
+        while (!daysOfWeek.includes(nextRun.getDay())) {
+          nextRun.setDate(nextRun.getDate() + 1);
+        }
+        nextRun.setHours(hours, minutes, 0, 0);
+        return nextRun;
+      }
+
+      case SchedulePattern.MONTHLY: {
+        const dayOfMonth = config.dayOfMonth || 1;
+        nextRun.setMonth(nextRun.getMonth() + 1);
+        nextRun.setDate(dayOfMonth);
+        nextRun.setHours(hours, minutes, 0, 0);
+        return nextRun;
+      }
+
+      case SchedulePattern.DATE_RANGE: {
+        const endDate = config.endDate ? new Date(config.endDate) : null;
+        nextRun.setDate(nextRun.getDate() + 1);
+        nextRun.setHours(hours, minutes, 0, 0);
+
+        if (endDate && nextRun > endDate) {
+          return endDate;
+        }
+        return nextRun;
+      }
+
+      default:
+        return config.scheduledAt;
+    }
+  }
+
+  /**
+   * Schedule the next scheduler check based on earliest due post
+   */
+  async scheduleNextCheck(): Promise<void> {
+    try {
+      // Find the earliest scheduled post
+      const earliestPost = await Post.findOne({
+        status: PostStatus.SCHEDULED,
+      }).sort({ scheduledAt: 1 });
+
+      if (!earliestPost?.scheduledAt) {
+        log.info("📭 No upcoming scheduled posts");
+        await clearSchedulerState();
+        return;
+      }
+
+      const nextCheckTime = earliestPost.scheduledAt;
+      await this.scheduleCheckAt(nextCheckTime);
+    } catch (error) {
+      log.error("Failed to schedule next check:", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * Schedule a check at a specific time
+   */
+  private async scheduleCheckAt(checkTime: Date): Promise<void> {
+    const now = Date.now();
+    const checkTimestamp = checkTime.getTime();
+    const delay = Math.max(0, checkTimestamp - now);
+
+    // Remove existing scheduler job if any
+    const existingJobId = await getActiveSchedulerJobId();
+    if (existingJobId) {
+      const existingJob = await schedulerQueue.getJob(existingJobId);
+      if (existingJob) {
+        await existingJob.remove();
+      }
+    }
+
+    // Create new scheduler job
+    const jobId = `scheduler-check-${checkTimestamp}`;
+    const job = await schedulerQueue.add(
+      SCHEDULER_JOB_NAME,
+      { checkTime: checkTimestamp },
+      {
+        jobId,
+        delay,
+        attempts: 3,
+      }
+    );
+
+    // Persist state
+    await setNextExecutionAt(checkTimestamp);
+    await setActiveSchedulerJobId(jobId);
+
+    const delaySeconds = Math.floor(delay / 1000);
+    log.info(
+      `⏰ Next check scheduled in ${delaySeconds}s at ${checkTime.toISOString()}`
+    );
+  }
+
+  /**
+   * Schedule an immediate check (used on startup or after errors)
+   */
+  async scheduleImmediateCheck(): Promise<void> {
+    await this.scheduleCheckAt(new Date(Date.now() + 1000));
+  }
+
+  /**
+   * EVENT HANDLERS
+   * These are called when posts are created/updated/deleted
+   */
+
+  /**
+   * Called when a post is scheduled (created or rescheduled)
+   */
+  async onPostScheduled(postId: string, scheduledAt: Date): Promise<void> {
+    log.info(
+      `📅 Event: Post ${postId} scheduled for ${scheduledAt.toISOString()}`
+    );
+
+    const currentNextExec = await getNextExecutionAt();
+
+    // If this post is due before the current next execution, reschedule
+    if (!currentNextExec || scheduledAt.getTime() < currentNextExec) {
+      log.info("🔄 Rescheduling: New post is due earlier");
+      await this.scheduleNextCheck();
+    }
+  }
+
+  /**
+   * Called when a scheduled post is cancelled or deleted
+   */
+  async onPostCancelled(postId: string): Promise<void> {
+    log.info(`🗑️  Event: Post ${postId} cancelled`);
+
+    // If the cancelled post was the next scheduled post, find new next post
+    const currentNextExec = await getNextExecutionAt();
+    const earliestPost = await Post.findOne({
+      status: PostStatus.SCHEDULED,
+    }).sort({ scheduledAt: 1 });
+
+    if (
+      !earliestPost ||
+      !earliestPost.scheduledAt ||
+      (currentNextExec &&
+        earliestPost.scheduledAt.getTime() !== currentNextExec)
+    ) {
+      log.info("🔄 Rescheduling: Next post changed after cancellation");
+      await this.scheduleNextCheck();
+    }
+  }
+
+  /**
+   * Process failed comments (can run periodically or be event-triggered)
+   */
+  async processFailedComments(): Promise<void> {
+    try {
+      const maxRetries = parseInt(process.env.COMMENT_MAX_RETRIES || "3", 10);
+
+      const postsWithFailedComments = await Post.find({
+        status: PostStatus.PUBLISHED,
+        threadsPostId: { $exists: true, $ne: null },
+        commentStatus: CommentStatus.FAILED,
+        comment: { $exists: true, $ne: "" },
+        commentRetryCount: { $lt: maxRetries },
+      }).limit(5);
+
+      if (postsWithFailedComments.length === 0) {
+        return;
+      }
+
+      log.info(`💬 Retrying ${postsWithFailedComments.length} failed comments`);
+
+      for (const post of postsWithFailedComments) {
+        try {
+          const jobId = `comment-retry-${post._id}-${Date.now()}`;
+          await postQueue.add(
+            "publish-post",
+            {
+              postId: post._id,
+              commentOnlyRetry: true,
+            },
+            {
+              jobId,
+              attempts: 1,
+            }
+          );
+
+          log.info(`💬 Queued comment retry for ${post._id}`);
+        } catch (error) {
+          log.error(`Failed to queue comment retry for ${post._id}:`, {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    } catch (error) {
+      log.error("Error in processFailedComments:", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+}
+
+export const eventDrivenScheduler = new EventDrivenScheduler();

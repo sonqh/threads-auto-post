@@ -8,6 +8,7 @@ import {
 } from "../models/Post.js";
 import { ThreadsAdapter } from "../adapters/ThreadsAdapter.js";
 import { threadsService } from "./ThreadsService.js";
+import { eventDrivenScheduler } from "./EventDrivenScheduler.js";
 import axios from "axios";
 import { log } from "../config/logger.js";
 
@@ -80,7 +81,17 @@ export class PostService {
    * Delete post
    */
   async deletePost(id: string): Promise<void> {
+    const post = await this.getPost(id);
+    const wasScheduled = post.status === PostStatus.SCHEDULED;
+
     await Post.findByIdAndDelete(id);
+
+    // 🎯 EVENT: Notify scheduler if a scheduled post was deleted
+    if (wasScheduled && process.env.USE_EVENT_DRIVEN_SCHEDULER === "true") {
+      await eventDrivenScheduler.onPostCancelled(id).catch((err) => {
+        console.error("Failed to notify scheduler:", err);
+      });
+    }
   }
 
   /**
@@ -256,6 +267,15 @@ export class PostService {
     console.log(` Post saved with status: ${savedPost.status}`);
     console.log(`   Scheduled At: ${savedPost.scheduledAt?.toISOString()}`);
     console.log(`   Schedule Config:`, savedPost.scheduleConfig);
+
+    // 🎯 EVENT: Notify scheduler of new scheduled post
+    if (process.env.USE_EVENT_DRIVEN_SCHEDULER === "true") {
+      await eventDrivenScheduler
+        .onPostScheduled(postId, config.scheduledAt)
+        .catch((err) => {
+          console.error("Failed to notify scheduler:", err);
+        });
+    }
 
     return savedPost;
   }

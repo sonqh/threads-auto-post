@@ -37,6 +37,10 @@ interface AppConfig {
     workerConcurrency: number;
     jobTimeout: number;
   };
+  scheduler: {
+    useEventDriven: boolean;
+    batchWindowMs: number;
+  };
   logging: {
     level: "debug" | "info" | "warn" | "error";
   };
@@ -83,6 +87,13 @@ export const loadConfig = (): AppConfig => {
     queue: {
       workerConcurrency: parseInt(process.env.WORKER_CONCURRENCY || "5", 10),
       jobTimeout: parseInt(process.env.JOB_TIMEOUT || "30000", 10),
+    },
+    scheduler: {
+      useEventDriven: process.env.USE_EVENT_DRIVEN_SCHEDULER === "true",
+      batchWindowMs: parseInt(
+        process.env.SCHEDULER_BATCH_WINDOW_MS || "60000",
+        10
+      ),
     },
     logging: {
       level: (process.env.LOG_LEVEL || "info") as
