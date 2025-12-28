@@ -10,6 +10,7 @@ interface PostsHeaderProps {
   onBulkDelete: (ids: string[]) => void;
   onBulkSchedule: (ids: string[], config: ScheduleConfig) => void;
   onBulkScheduleRandom?: () => void; // New: for random distribution scheduling
+  onBulkCancel?: (ids: string[]) => void; // New: for bulk canceling scheduled posts
   selectedIds: string[];
 }
 
@@ -19,6 +20,7 @@ export const PostsHeader = ({
   onBulkDelete,
   onBulkSchedule,
   onBulkScheduleRandom,
+  onBulkCancel,
   selectedIds,
 }: PostsHeaderProps) => {
   const [showSchedulerModal, setShowSchedulerModal] = useState(false);
@@ -63,6 +65,21 @@ export const PostsHeader = ({
             >
               Schedule (Same Time)
             </Button>
+            {onBulkCancel && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  if (
+                    confirm(`Cancel schedule for ${selectedCount} post(s)?`)
+                  ) {
+                    onBulkCancel(selectedIds);
+                  }
+                }}
+              >
+                Cancel Schedule
+              </Button>
+            )}
             <Button
               size="sm"
               variant="destructive"

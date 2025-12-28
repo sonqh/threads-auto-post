@@ -20,6 +20,7 @@ interface PostRowProps {
   onFixStuck?: (postId: string) => void;
   onPostRecovered?: (post: Post) => void;
   publishing?: boolean;
+  credentials?: Array<{ id: string; accountName: string }>;
 }
 
 const getStatusBadge = (status: PostStatusType) => {
@@ -53,9 +54,19 @@ export const PostRow: React.FC<PostRowProps> = ({
   onFixStuck,
   onPostRecovered,
   publishing = false,
+  credentials,
 }) => {
   const [showRecoveryModal, setShowRecoveryModal] = useState(false);
   const [isStuckPublishing, setIsStuckPublishing] = useState(false);
+
+  // Get account name from account ID
+  const getAccountName = () => {
+    if (!post.threadsAccountId || !credentials) {
+      return "Default";
+    }
+    const account = credentials.find((c) => c.id === post.threadsAccountId);
+    return account?.accountName || "Unknown Account";
+  };
 
   const canPublish = post.status === "DRAFT";
   const canSchedule = post.status === "DRAFT";
@@ -150,6 +161,12 @@ export const PostRow: React.FC<PostRowProps> = ({
 
         <TableCell>
           <span className="text-sm text-gray-600">{post.postType}</span>
+        </TableCell>
+
+        <TableCell>
+          <span className="text-sm font-medium text-blue-700 bg-blue-50 px-2 py-1 rounded">
+            {getAccountName()}
+          </span>
         </TableCell>
 
         <TableCell>

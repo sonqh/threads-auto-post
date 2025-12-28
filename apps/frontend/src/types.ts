@@ -36,6 +36,7 @@ export interface Post {
   skipAI?: boolean;
   comment?: string;
   threadsPostId?: string;
+  threadsAccountId?: string;
   scheduledAt?: string | Date;
   scheduleConfig?: ScheduleConfig;
   publishingProgress?: {

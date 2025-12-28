@@ -17,6 +17,7 @@ interface EditPostModalProps {
   post: Post;
   onClose: () => void;
   onSave: (updatedPost: Partial<Post>) => Promise<void>;
+  credentials?: Array<{ id: string; accountName: string }>;
 }
 
 // Sanitize and validate image URLs
@@ -29,6 +30,7 @@ export const EditPostModal: React.FC<EditPostModalProps> = ({
   post,
   onClose,
   onSave,
+  credentials,
 }) => {
   const [content, setContent] = useState(post.content);
   const [topicTags, setTopicTags] = useState<string[]>(
@@ -38,7 +40,10 @@ export const EditPostModal: React.FC<EditPostModalProps> = ({
   const [status, setStatus] = useState<PostStatusType>(
     post.status as PostStatusType
   );
-  
+  const [selectedAccountId, setSelectedAccountId] = useState<string>(
+    post.threadsAccountId || ""
+  );
+
   // Link management - validate URLs on load
   const [links, setLinks] = useState<string[]>(
     sanitizeImageUrls(post.imageUrls)
@@ -118,6 +123,7 @@ export const EditPostModal: React.FC<EditPostModalProps> = ({
         comment: description.trim() || undefined,
         status,
         imageUrls: links,
+        threadsAccountId: selectedAccountId || undefined,
       });
       // Success - modal will be closed by parent
     } catch (err) {
@@ -188,7 +194,9 @@ export const EditPostModal: React.FC<EditPostModalProps> = ({
 
           {/* Description */}
           <div>
-            <label className="block text-sm font-medium mb-2">Description</label>
+            <label className="block text-sm font-medium mb-2">
+              Description
+            </label>
             <textarea
               className="w-full px-3 py-2 border rounded-lg resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               rows={3}
@@ -201,6 +209,28 @@ export const EditPostModal: React.FC<EditPostModalProps> = ({
               {description.length}/300 characters
             </div>
           </div>
+
+          {/* Account Selector */}
+          {post.status === "DRAFT" && (
+            <div>
+              <label className="block text-sm font-medium mb-2">
+                Threads Account
+              </label>
+              <select
+                value={selectedAccountId}
+                onChange={(e) => setSelectedAccountId(e.target.value)}
+                disabled={!credentials || credentials.length === 0}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-white text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="">Default Account</option>
+                {credentials?.map((cred) => (
+                  <option key={cred.id} value={cred.id}>
+                    {cred.accountName}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Status */}
           <div>

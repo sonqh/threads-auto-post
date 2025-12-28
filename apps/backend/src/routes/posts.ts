@@ -153,7 +153,8 @@ router.post("/bulk-delete", async (req, res) => {
 // Publish post to Threads
 router.post("/:id/publish", async (req, res) => {
   try {
-    const post = await postService.publishPost(req.params.id);
+    const { accountId } = req.body;
+    const post = await postService.publishPost(req.params.id, accountId);
     res.json(post);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -177,8 +178,15 @@ router.get("/:id/progress", async (req, res) => {
 router.post("/:id/schedule", async (req, res) => {
   try {
     const postId = req.params.id;
-    const { pattern, scheduledAt, daysOfWeek, dayOfMonth, endDate, time } =
-      req.body;
+    const {
+      pattern,
+      scheduledAt,
+      daysOfWeek,
+      dayOfMonth,
+      endDate,
+      time,
+      accountIds,
+    } = req.body;
 
     console.log(`\n📅 SCHEDULE REQUEST RECEIVED:`);
     console.log(`   Post ID: ${postId}`);
@@ -186,6 +194,9 @@ router.post("/:id/schedule", async (req, res) => {
     console.log(`   Scheduled At: ${scheduledAt}`);
     console.log(`   Time: ${time}`);
     console.log(`   Days of Week: ${daysOfWeek || "N/A"}`);
+    console.log(
+      `   Account IDs: ${accountIds ? accountIds.join(", ") : "N/A"}`
+    );
 
     if (!pattern || !scheduledAt) {
       console.log(`Invalid request: missing pattern or scheduledAt`);
@@ -256,12 +267,14 @@ router.post("/:id/cancel", async (req, res) => {
 // Body: { postIds: string[], startTime: string, endTime: string, randomizeOrder?: boolean, seed?: number }
 router.post("/bulk-schedule", async (req, res) => {
   try {
-    const { postIds, startTime, endTime, randomizeOrder, seed } = req.body;
+    const { postIds, startTime, endTime, randomizeOrder, seed, accountId } =
+      req.body;
 
     console.log(`\n📅 BULK SCHEDULE REQUEST RECEIVED:`);
     console.log(`   Post Count: ${postIds?.length || 0}`);
     console.log(`   Start Time: ${startTime}`);
     console.log(`   End Time: ${endTime}`);
+    console.log(`   Account ID: ${accountId || "default"}`);
     console.log(`   Randomize Order: ${randomizeOrder || false}`);
 
     // Validate required fields
@@ -306,6 +319,7 @@ router.post("/bulk-schedule", async (req, res) => {
       {
         randomizeOrder,
         seed,
+        accountId,
       }
     );
 
@@ -333,6 +347,48 @@ router.post("/bulk-schedule", async (req, res) => {
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error(`Bulk schedule error: ${message}`);
+    res.status(400).json({
+      success: false,
+      error: message,
+    });
+  }
+});
+
+// Cancel bulk scheduled posts
+router.post("/bulk-cancel", async (req, res) => {
+  try {
+    const { postIds } = req.body;
+
+    console.log(`\n📅 BULK CANCEL REQUEST RECEIVED:`);
+    console.log(`   Post Count: ${postIds?.length || 0}`);
+
+    // Validate required fields
+    if (!postIds || !Array.isArray(postIds) || postIds.length === 0) {
+      console.log(`Invalid request: postIds required`);
+      return res.status(400).json({
+        error: "postIds array is required and must not be empty",
+      });
+    }
+
+    // Call the cancel scheduling service
+    const results = await postService.cancelScheduledPosts(postIds);
+
+    console.log(` Bulk cancel completed successfully`);
+    console.log(`   Cancelled ${results.cancelled} posts`);
+    console.log(`   Already published ${results.alreadyPublished} posts`);
+    console.log(`   Not found ${results.notFound} posts`);
+
+    // Return results
+    res.json({
+      success: true,
+      cancelled: results.cancelled,
+      alreadyPublished: results.alreadyPublished,
+      notFound: results.notFound,
+      total: results.cancelled + results.alreadyPublished + results.notFound,
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error(`Bulk cancel error: ${message}`);
     res.status(400).json({
       success: false,
       error: message,

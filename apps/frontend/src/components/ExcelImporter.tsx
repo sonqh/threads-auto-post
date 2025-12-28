@@ -22,10 +22,12 @@ export const ExcelImporter: React.FC<{ onImportComplete?: () => void }> = ({
   const [duplicateGroups, setDuplicateGroups] = useState<
     Array<{
       index: number;
+      content: string;
       matches: any[];
       description?: string;
       topic?: string;
       imageUrls?: string[];
+      duplicateType?: "EXACT" | "CONTENT_ONLY";
     }>
   >([]);
   const [result, setResult] = useState<{
@@ -63,10 +65,12 @@ export const ExcelImporter: React.FC<{ onImportComplete?: () => void }> = ({
         // Transform API response to match state type
         const transformed = response.duplicates.map((dup: any) => ({
           index: dup.rowIndex ?? dup.index ?? 0,
+          content: dup.content || "",
           matches: dup.matches || [],
           description: dup.description,
           topic: dup.topic,
           imageUrls: dup.imageUrls,
+          duplicateType: dup.duplicateType || "EXACT",
         }));
         setDuplicateGroups(transformed);
         setShowDuplicateModal(true);

@@ -267,6 +267,21 @@ export class ThreadsService {
   }
 
   /**
+   * Get credential by MongoDB ID
+   */
+  async getCredentialById(
+    credentialId: string
+  ): Promise<IThreadsCredential | null> {
+    try {
+      const credential = await ThreadsCredential.findById(credentialId);
+      return credential;
+    } catch (error) {
+      console.error(`Failed to get credential ${credentialId}:`, error);
+      return null;
+    }
+  }
+
+  /**
    * Get all active credentials
    */
   async getAllCredentials(): Promise<IThreadsCredential[]> {

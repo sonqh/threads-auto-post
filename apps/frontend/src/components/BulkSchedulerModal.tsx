@@ -1,7 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { X, Calendar, Clock, Shuffle } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
+import { useCredentials } from "../hooks/useCredentials";
 
 interface BulkSchedulerModalProps {
   isOpen: boolean;
@@ -9,7 +10,11 @@ interface BulkSchedulerModalProps {
   onSchedule: (
     startTime: string,
     endTime: string,
-    options: { randomizeOrder: boolean }
+    options: {
+      randomizeOrder: boolean;
+      accountId?: string;
+      accountIds?: string[];
+    }
   ) => void;
   postCount: number;
 }
@@ -20,11 +25,19 @@ export const BulkSchedulerModal: React.FC<BulkSchedulerModalProps> = ({
   onSchedule,
   postCount,
 }) => {
+  const { credentials, loading } = useCredentials();
   const [startDate, setStartDate] = useState("");
   const [startTime, setStartTime] = useState("20:00");
   const [endDate, setEndDate] = useState("");
   const [endTime, setEndTime] = useState("22:00");
   const [randomizeOrder, setRandomizeOrder] = useState(true);
+  const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
+
+  // Initialize default account selection
+  const defaultAccountId = useMemo(() => {
+    if (!credentials || credentials.length === 0) return "";
+    return credentials[0]?.id || "";
+  }, [credentials]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,6 +45,14 @@ export const BulkSchedulerModal: React.FC<BulkSchedulerModalProps> = ({
     // Validate inputs
     if (!startDate || !endDate) {
       alert("Please select both start and end dates");
+      return;
+    }
+
+    const accountsToUse =
+      selectedAccountIds.length > 0 ? selectedAccountIds : [defaultAccountId];
+
+    if (accountsToUse.length === 0 || !accountsToUse[0]) {
+      alert("Please select at least one account");
       return;
     }
 
@@ -58,10 +79,22 @@ export const BulkSchedulerModal: React.FC<BulkSchedulerModalProps> = ({
       return;
     }
 
-    onSchedule(startDateTime, endDateTime, { randomizeOrder });
+    onSchedule(startDateTime, endDateTime, {
+      randomizeOrder,
+      accountId: accountsToUse[0], // For backward compatibility
+      accountIds: accountsToUse,
+    });
   };
 
   if (!isOpen) return null;
+
+  const handleAccountToggle = (accountId: string) => {
+    setSelectedAccountIds((prev) =>
+      prev.includes(accountId)
+        ? prev.filter((id) => id !== accountId)
+        : [...prev, accountId]
+    );
+  };
 
   // Calculate estimated duration
   const getEstimatedDuration = () => {
@@ -104,6 +137,65 @@ export const BulkSchedulerModal: React.FC<BulkSchedulerModalProps> = ({
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-6">
+            {/* Account Selector - Multi-select */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">
+                Accounts{" "}
+                {selectedAccountIds.length > 0 &&
+                  `(${selectedAccountIds.length} selected)`}
+              </label>
+              <div className="border border-gray-300 dark:border-gray-600 rounded-md p-3 space-y-2 max-h-48 overflow-y-auto bg-white dark:bg-gray-950">
+                {!credentials || credentials.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No accounts available
+                  </p>
+                ) : (
+                  <>
+                    <label className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-900 p-2 rounded">
+                      <input
+                        type="checkbox"
+                        checked={
+                          selectedAccountIds.length === credentials.length
+                        }
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedAccountIds(credentials.map((c) => c.id));
+                          } else {
+                            setSelectedAccountIds([]);
+                          }
+                        }}
+                        disabled={loading}
+                        className="w-4 h-4"
+                      />
+                      <span className="text-sm font-medium">Select All</span>
+                    </label>
+                    <div className="border-t border-gray-200 dark:border-gray-700 my-2" />
+                    {credentials.map((cred) => (
+                      <label
+                        key={cred.id}
+                        className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-900 p-2 rounded"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedAccountIds.includes(cred.id)}
+                          onChange={() => handleAccountToggle(cred.id)}
+                          disabled={loading}
+                          className="w-4 h-4"
+                        />
+                        <span className="text-sm">
+                          {cred.accountName} {cred.isDefault ? "(Default)" : ""}
+                        </span>
+                      </label>
+                    ))}
+                  </>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Select one or more accounts. Posts will be distributed across
+                selected accounts.
+              </p>
+            </div>
+
             {/* Info Box */}
             <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
               <h3 className="font-semibold text-blue-900 dark:text-blue-100 mb-2">

@@ -21,6 +21,7 @@ interface PostsTableProps {
   onFixStuck?: (postId: string) => void;
   onPostRecovered?: (post: Post) => void;
   publishingIds?: Set<string>;
+  credentials?: Array<{ id: string; accountName: string }>;
 }
 
 export const PostsTable = ({
@@ -35,6 +36,7 @@ export const PostsTable = ({
   onFixStuck,
   onPostRecovered,
   publishingIds,
+  credentials,
 }: PostsTableProps) => {
   const allSelected = posts.length > 0 && selectedIds.size === posts.length;
 
@@ -66,6 +68,7 @@ export const PostsTable = ({
           <TableHead>Content</TableHead>
           <TableHead>Status</TableHead>
           <TableHead>Type</TableHead>
+          <TableHead>Account</TableHead>
           <TableHead>Links</TableHead>
           <TableHead>Comment</TableHead>
           <TableHead>Scheduled</TableHead>
@@ -88,6 +91,7 @@ export const PostsTable = ({
             onFixStuck={onFixStuck}
             onPostRecovered={onPostRecovered}
             publishing={publishingIds?.has(post._id)}
+            credentials={credentials}
           />
         ))}
       </TableBody>

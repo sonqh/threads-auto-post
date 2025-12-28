@@ -10,7 +10,7 @@ import { ThreadsAdapter } from "../adapters/ThreadsAdapter.js";
 import { threadsService } from "./ThreadsService.js";
 import { eventDrivenScheduler } from "./EventDrivenScheduler.js";
 import axios from "axios";
-import { log } from "../config/logger.js";
+import { log, logger } from "../config/logger.js";
 
 export class PostService {
   private threadsAdapter: ThreadsAdapter;
@@ -107,7 +107,7 @@ export class PostService {
    */
   async publishPost(
     postId: string,
-    threadsUserId?: string
+    accountId?: string
   ): Promise<{
     success: boolean;
     threadsPostId?: string;
@@ -115,6 +115,12 @@ export class PostService {
   }> {
     try {
       const post = await this.getPost(postId);
+
+      // Save the account ID if provided
+      if (accountId) {
+        post.threadsAccountId = accountId;
+        await post.save();
+      }
 
       // Update progress: publishing started
       post.status = PostStatus.PUBLISHING;
@@ -124,15 +130,43 @@ export class PostService {
         currentStep: "Initializing...",
       };
       await post.save();
-      log.info(`[${postId}] Publishing started`, { status: "publishing" });
+      log.info(`[${postId}] Publishing started`, {
+        status: "publishing",
+        accountId,
+      });
 
       // Get Threads credential
       post.publishingProgress.currentStep = "Fetching credentials...";
       await post.save();
 
-      const credential = await threadsService.getValidCredential(
-        threadsUserId || process.env.THREADS_USER_ID || ""
-      );
+      // Use threadsAccountId if available, otherwise fall back to default
+      let credential = null;
+
+      if (accountId || post.threadsAccountId) {
+        credential = await threadsService.getCredentialById(
+          accountId || post.threadsAccountId || ""
+        );
+        logger.info(
+          `Using account-specific credential for Threads user ID: ${credential?.threadsUserId}`,
+          { postId, accountId: accountId || post.threadsAccountId }
+        );
+      }
+
+      // Only fall back to environment credential if no account was specified
+      if (!credential) {
+        credential = await threadsService.getValidCredential(
+          process.env.THREADS_USER_ID || ""
+        );
+        logger.info(
+          `Using default credential for Threads user ID: ${credential.threadsUserId}`
+        );
+      }
+
+      if (!credential) {
+        throw new Error(
+          "Unable to get valid Threads credentials for publishing"
+        );
+      }
 
       // Validate post for publishing
       post.publishingProgress.currentStep = "Validating post...";
@@ -243,9 +277,14 @@ export class PostService {
   /**
    * Schedule post for publishing with flexible patterns
    */
-  async schedulePost(postId: string, config: ScheduleConfig): Promise<IPost> {
+  async schedulePost(
+    postId: string,
+    config: ScheduleConfig,
+    accountId?: string
+  ): Promise<IPost> {
     console.log(`\n📅 PostService.schedulePost() called:`);
     console.log(`   Post ID: ${postId}`);
+    console.log(`   Account ID: ${accountId || "default"}`);
     console.log(`   Config:`, config);
 
     if (config.scheduledAt <= new Date()) {
@@ -262,6 +301,11 @@ export class PostService {
     post.status = PostStatus.SCHEDULED;
     post.scheduledAt = config.scheduledAt;
     post.scheduleConfig = config;
+
+    // Set account ID if provided
+    if (accountId) {
+      post.threadsAccountId = accountId as any;
+    }
 
     const savedPost = await post.save();
     console.log(` Post saved with status: ${savedPost.status}`);
@@ -365,6 +409,7 @@ export class PostService {
     options?: {
       randomizeOrder?: boolean;
       seed?: number;
+      accountId?: string;
     }
   ): Promise<
     Array<{
@@ -486,7 +531,11 @@ export class PostService {
           .padStart(2, "0")}`,
       };
 
-      const post = await this.schedulePost(postId, scheduleConfig);
+      const post = await this.schedulePost(
+        postId,
+        scheduleConfig,
+        options?.accountId
+      );
       results.push({ post, scheduledAt });
 
       log.info(
@@ -503,6 +552,63 @@ export class PostService {
     );
 
     return results;
+  }
+
+  /**
+   * Cancel scheduled posts (change SCHEDULED back to DRAFT)
+   */
+  async cancelScheduledPosts(postIds: string[]): Promise<{
+    cancelled: number;
+    alreadyPublished: number;
+    notFound: number;
+  }> {
+    let cancelled = 0;
+    let alreadyPublished = 0;
+    let notFound = 0;
+
+    for (const postId of postIds) {
+      try {
+        const post = await Post.findById(postId);
+
+        if (!post) {
+          notFound++;
+          log.warn(`Post ${postId} not found for cancellation`);
+          continue;
+        }
+
+        if (post.status === PostStatus.PUBLISHED) {
+          alreadyPublished++;
+          log.warn(`Cannot cancel post ${postId} - already published`);
+          continue;
+        }
+
+        if (post.status === PostStatus.SCHEDULED) {
+          post.status = PostStatus.DRAFT;
+          post.scheduledAt = undefined;
+          post.scheduleConfig = undefined;
+          await post.save();
+          cancelled++;
+          log.success(`Cancelled scheduled post ${postId}`);
+
+          // Notify event-driven scheduler to remove the post
+          if (process.env.USE_EVENT_DRIVEN_SCHEDULER === "true") {
+            await eventDrivenScheduler.onPostCancelled(postId).catch((err) => {
+              log.warn(`Failed to notify scheduler of cancellation: ${err}`);
+            });
+          }
+        }
+      } catch (error) {
+        log.error(`Error cancelling post ${postId}:`, {
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    }
+
+    log.info(
+      `Bulk cancel completed: ${cancelled} cancelled, ${alreadyPublished} already published, ${notFound} not found`
+    );
+
+    return { cancelled, alreadyPublished, notFound };
   }
 
   /**

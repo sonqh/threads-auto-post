@@ -114,12 +114,13 @@ export const postsApi = {
       dayOfMonth?: number;
       endDate?: string;
       time?: string;
-    }
+    },
+    accountIds?: string[]
   ): Promise<Post> {
-    const response = await axios.post(
-      `${API_BASE_URL}/posts/${id}/schedule`,
-      config
-    );
+    const response = await axios.post(`${API_BASE_URL}/posts/${id}/schedule`, {
+      ...config,
+      accountIds,
+    });
     return response.data;
   },
 
@@ -139,13 +140,19 @@ export const postsApi = {
     return response.data;
   },
 
-  async publishPost(id: string): Promise<{
+  async publishPost(
+    id: string,
+    accountId?: string
+  ): Promise<{
     success: boolean;
     threadsPostId?: string;
     error?: string;
     post?: Post;
   }> {
-    const response = await axios.post(`${API_BASE_URL}/posts/${id}/publish`);
+    const response = await axios.post(
+      `${API_BASE_URL}/posts/${id}/publish`,
+      accountId ? { accountId } : {}
+    );
     return response.data;
   },
 
@@ -156,6 +163,7 @@ export const postsApi = {
     options?: {
       randomizeOrder?: boolean;
       seed?: number;
+      accountId?: string;
     }
   ): Promise<{
     success: boolean;
@@ -177,6 +185,19 @@ export const postsApi = {
       startTime,
       endTime,
       ...options,
+    });
+    return response.data;
+  },
+
+  async bulkCancel(postIds: string[]): Promise<{
+    success: boolean;
+    cancelled: number;
+    alreadyPublished: number;
+    notFound: number;
+    total: number;
+  }> {
+    const response = await axios.post(`${API_BASE_URL}/posts/bulk-cancel`, {
+      postIds,
     });
     return response.data;
   },
@@ -290,9 +311,11 @@ export const excelApi = {
     success: boolean;
     duplicates: Array<{
       rowIndex: number;
+      content: string;
       description?: string;
       topic?: string;
       imageUrls?: string[];
+      duplicateType: "EXACT" | "CONTENT_ONLY";
       matches: Array<{
         _id: string;
         content: string;

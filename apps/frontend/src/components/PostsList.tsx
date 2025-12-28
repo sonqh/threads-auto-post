@@ -1,13 +1,14 @@
 import { format } from "date-fns";
 import { Download, ArrowUp, ArrowDown } from "lucide-react";
 import React, { useEffect, useState, useCallback } from "react";
-import { usePostList, useThreadsPublish } from "../hooks";
+import { usePostList, useThreadsPublish, useCredentials } from "../hooks";
 import { PostsHeader } from "./PostsHeader";
 import { PostsTable } from "./PostsTable";
 import { EditPostModal } from "./EditPostModal";
 import { SchedulerModal } from "./SchedulerModal";
 import { BulkSchedulerModal } from "./BulkSchedulerModal";
 import { Pagination } from "./Pagination";
+import { AccountSelector } from "./AccountSelector";
 import { Button } from "./ui/button";
 import {
   Card,
@@ -18,6 +19,7 @@ import {
 } from "./ui/card";
 import {
   PostStatus,
+  PostType,
   type Post,
   type PostStatusType,
   type ScheduleConfig,
@@ -42,6 +44,7 @@ export const PostsList: React.FC = () => {
   } = usePostList();
   const { publish, schedulePost, cancelSchedule, publishing } =
     useThreadsPublish();
+  const { credentials } = useCredentials();
 
   // UI State
   const [selectedStatus, setSelectedStatus] = useState<PostStatusType | "">(
@@ -56,11 +59,31 @@ export const PostsList: React.FC = () => {
     }
   );
   const [selectedPosts, setSelectedPosts] = useState<Set<string>>(new Set());
+  const [selectedAccountId, setSelectedAccountId] = useState<
+    string | undefined
+  >(undefined);
   const [pageSize, setPageSize] = useState(limit);
   const [sortBy, setSortBy] = useState<
     "createdAt" | "scheduledAt" | "publishedAt"
   >("createdAt");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  const [postTypeFilter, setPostTypeFilter] = useState<string | "">(() => {
+    // Read postType from URL on mount
+    const params = new URLSearchParams(window.location.search);
+    return params.get("postType") || "";
+  });
+
+  // Initialize selectedAccountId when credentials load
+  useEffect(() => {
+    if (credentials.length > 0 && !selectedAccountId) {
+      const defaultCred = credentials.find((c) => c.isDefault);
+      setSelectedAccountId(defaultCred?.id || credentials[0]?.id);
+    }
+  }, [credentials, selectedAccountId]);
+
+  useEffect(() => {
+    console.log("selectedAccountId ", selectedAccountId);
+  }, [selectedAccountId]);
 
   // Modal State
   const [showLinksModal, setShowLinksModal] = useState(false);
@@ -140,7 +163,14 @@ export const PostsList: React.FC = () => {
 
   // Sort posts in memory
   const sortedPosts = useCallback(() => {
-    return [...posts].sort((a, b) => {
+    let filtered = [...posts];
+
+    // Filter by postType if selected
+    if (postTypeFilter) {
+      filtered = filtered.filter((p) => p.postType === postTypeFilter);
+    }
+
+    return filtered.sort((a, b) => {
       let aVal: string | Date | undefined;
       let bVal: string | Date | undefined;
 
@@ -168,7 +198,7 @@ export const PostsList: React.FC = () => {
       const comparison = aTime - bTime;
       return sortDirection === "asc" ? comparison : -comparison;
     });
-  }, [posts, sortBy, sortDirection])();
+  }, [posts, sortBy, sortDirection, postTypeFilter])();
 
   // Handlers - Bulk Actions
   const handleBulkDelete = useCallback(
@@ -205,12 +235,27 @@ export const PostsList: React.FC = () => {
     [schedulePost, fetchPosts, selectedStatus, page]
   );
 
+  const handleBulkCancel = useCallback(
+    async (ids: string[]) => {
+      try {
+        const result = await postsApi.bulkCancel(ids);
+        alert(`Successfully cancelled ${result.cancelled} scheduled post(s)`);
+        setSelectedPosts(new Set());
+        await fetchPosts(selectedStatus || undefined, page);
+      } catch (error) {
+        console.error("Failed to cancel schedules:", error);
+        alert("Failed to cancel schedules. Please try again.");
+      }
+    },
+    [fetchPosts, selectedStatus, page]
+  );
+
   // Handler for new bulk schedule with random distribution
   const handleBulkScheduleWithRandomDistribution = useCallback(
     async (
       startTime: string,
       endTime: string,
-      options: { randomizeOrder: boolean }
+      options: { randomizeOrder: boolean; accountId?: string }
     ) => {
       if (selectedPosts.size === 0) {
         alert("No posts selected");
@@ -262,10 +307,15 @@ export const PostsList: React.FC = () => {
       const post = posts.find((p) => p._id === postId);
       if (!post) return;
 
+      if (!selectedAccountId) {
+        alert("Please select an account to publish to");
+        return;
+      }
+
       if (!confirm("Publish this post to Threads now?")) return;
 
       try {
-        await publish(postId, post);
+        await publish(postId, post, selectedAccountId);
 
         // Wait a bit for the backend to process, then poll for updated status
         let attempts = 0;
@@ -325,12 +375,17 @@ export const PostsList: React.FC = () => {
   const handleSchedulerSubmit = useCallback(
     async (config: ScheduleConfig) => {
       if (!schedulingPostId) return;
+      if (!selectedAccountId) {
+        alert("Please select an account to schedule for");
+        return;
+      }
       try {
         console.log("🎯 PostsList: Schedule submitted");
         console.log(`   Post ID: ${schedulingPostId}`);
         console.log(`   Config:`, config);
+        console.log(`   Account ID: ${selectedAccountId}`);
 
-        await schedulePost(schedulingPostId, config);
+        await schedulePost(schedulingPostId, config, [selectedAccountId]);
         console.log(" PostsList: Schedule API success");
 
         await fetchPosts(selectedStatus || undefined, page);
@@ -341,7 +396,14 @@ export const PostsList: React.FC = () => {
         alert("Failed to schedule post. Please try again.");
       }
     },
-    [schedulingPostId, schedulePost, fetchPosts, selectedStatus, page]
+    [
+      schedulingPostId,
+      schedulePost,
+      fetchPosts,
+      selectedStatus,
+      page,
+      selectedAccountId,
+    ]
   );
 
   const handleCancel = useCallback(
@@ -461,6 +523,35 @@ export const PostsList: React.FC = () => {
             </Button>
           ))}
         </div>
+
+        {/* Account & Type Filters */}
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <AccountSelector
+            credentials={credentials}
+            selectedAccountId={selectedAccountId}
+            onSelect={(id) =>
+              setSelectedAccountId(typeof id === "string" ? id : id[0])
+            }
+            className="col-span-1"
+          />
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Post Type</label>
+            <div className="flex flex-wrap gap-2">
+              {["", ...Object.values(PostType)].map((type) => (
+                <Button
+                  key={type || "all-types"}
+                  variant={postTypeFilter === type ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setPostTypeFilter(type)}
+                  className="text-xs"
+                >
+                  {type || "All Types"}
+                </Button>
+              ))}
+            </div>
+          </div>
+        </div>
       </CardHeader>
 
       <CardContent className="space-y-4">
@@ -488,6 +579,7 @@ export const PostsList: React.FC = () => {
               onBulkDelete={handleBulkDelete}
               onBulkSchedule={handleBulkSchedule}
               onBulkScheduleRandom={() => setShowBulkSchedulerModal(true)}
+              onBulkCancel={handleBulkCancel}
             />
 
             {/* Sorting Controls */}
@@ -549,6 +641,7 @@ export const PostsList: React.FC = () => {
               publishingIds={
                 new Set(Object.keys(publishing).filter((id) => publishing[id]))
               }
+              credentials={credentials}
             />
 
             {/* Pagination */}
@@ -585,6 +678,7 @@ export const PostsList: React.FC = () => {
             post={editingPost}
             onClose={handleCloseEditModal}
             onSave={handleSavePost}
+            credentials={credentials}
           />
         )}
 

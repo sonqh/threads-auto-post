@@ -9,6 +9,7 @@ import {
   generateContentHash,
 } from "./models/Post.js";
 import { ThreadsAdapter } from "./adapters/ThreadsAdapter.js";
+import { ThreadsService } from "./services/ThreadsService.js";
 import { schedulerService } from "./services/SchedulerService.js";
 import { eventDrivenScheduler } from "./services/EventDrivenScheduler.js";
 import { idempotencyService } from "./services/IdempotencyService.js";
@@ -17,7 +18,7 @@ import { log } from "./config/logger.js";
 dotenv.config();
 
 const connection = createRedisConnection();
-const threadsAdapter = new ThreadsAdapter();
+const threadsService = new ThreadsService();
 const WORKER_ID = `worker-${process.pid}-${Date.now()}`;
 
 const worker = new Worker(
@@ -123,7 +124,28 @@ const worker = new Worker(
           post.commentRetryCount = 0;
         }
 
-        // ===== Step 5: Update content hash and status =====
+        // ===== Step 5: Initialize adapter with correct credentials =====
+        let adapter = new ThreadsAdapter();
+        if (post.threadsAccountId) {
+          const credential = await threadsService.getCredentialById(
+            post.threadsAccountId.toString()
+          );
+          if (credential) {
+            adapter = new ThreadsAdapter(
+              credential.threadsUserId,
+              credential.accessToken
+            );
+            log.info(
+              `Using account ${credential.threadsUserId} for post ${postId}`
+            );
+          } else {
+            log.warn(
+              `Credential ${post.threadsAccountId} not found, using default`
+            );
+          }
+        }
+
+        // ===== Step 6: Update content hash and status =====
         post.contentHash = generateContentHash(
           post.content,
           post.imageUrls,
@@ -143,7 +165,7 @@ const worker = new Worker(
 
         await post.save();
 
-        // ===== Step 6: Prepare media URLs =====
+        // ===== Step 7: Prepare media URLs =====
         const mediaUrls = post.imageUrls.filter(
           (url) => url && url.trim() !== ""
         );
@@ -152,8 +174,8 @@ const worker = new Worker(
             ? post.videoUrl
             : undefined;
 
-        // ===== Step 7: Publish to Threads (post only, handle comment separately) =====
-        const result = await threadsAdapter.publishPost({
+        // ===== Step 8: Publish to Threads (post only, handle comment separately) =====
+        const result = await adapter.publishPost({
           content: post.content,
           mediaUrls: mediaUrls.length > 0 ? mediaUrls : undefined,
           videoUrl,
@@ -323,8 +345,29 @@ async function handleCommentOnlyRetry(post: any, job: any) {
   await post.save();
 
   try {
+    // Initialize adapter with correct credentials for this account
+    let adapter = new ThreadsAdapter();
+    if (post.threadsAccountId) {
+      const credential = await threadsService.getCredentialById(
+        post.threadsAccountId.toString()
+      );
+      if (credential) {
+        adapter = new ThreadsAdapter(
+          credential.threadsUserId,
+          credential.accessToken
+        );
+        log.info(
+          `💬 Using account ${credential.threadsUserId} for comment retry`
+        );
+      } else {
+        log.warn(
+          `Credential ${post.threadsAccountId} not found, using default`
+        );
+      }
+    }
+
     // Use the stored threadsPostId (origin post ID) for comment
-    const commentResult = await threadsAdapter.publishComment(
+    const commentResult = await adapter.publishComment(
       post.threadsPostId,
       post.comment
     );

@@ -6,10 +6,12 @@ import type { DuplicatePost } from "@/lib/duplicateDetection";
 interface DuplicatePostsModalProps {
   duplicateGroups: Array<{
     index: number;
+    content: string;
     matches: DuplicatePost[];
     description?: string;
     topic?: string;
     imageUrls?: string[];
+    duplicateType?: "EXACT" | "CONTENT_ONLY";
   }>;
   onContinue: () => void;
   onCancel: () => void;
@@ -23,6 +25,12 @@ export const DuplicatePostsModal: React.FC<DuplicatePostsModalProps> = ({
   isContinuing = false,
 }) => {
   const totalDuplicates = duplicateGroups.length;
+  const exactDuplicates = duplicateGroups.filter(
+    (g) => g.duplicateType === "EXACT"
+  ).length;
+  const contentOnlyDuplicates = duplicateGroups.filter(
+    (g) => g.duplicateType === "CONTENT_ONLY"
+  ).length;
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -33,7 +41,8 @@ export const DuplicatePostsModal: React.FC<DuplicatePostsModalProps> = ({
             <div className="flex items-center gap-2">
               <AlertCircle className="h-5 w-5 text-amber-600" />
               <h2 className="text-lg font-semibold">
-                {totalDuplicates} Duplicate{totalDuplicates !== 1 ? "s" : ""} Detected
+                {totalDuplicates} Duplicate{totalDuplicates !== 1 ? "s" : ""}{" "}
+                Detected
               </h2>
             </div>
             <Button
@@ -48,30 +57,74 @@ export const DuplicatePostsModal: React.FC<DuplicatePostsModalProps> = ({
           </div>
 
           {/* Warning Message */}
-          <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-900">
-            <p className="font-medium mb-1">
-              The following posts already exist in your system
+          <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-900 space-y-2">
+            <p className="font-medium">
+              {totalDuplicates} Duplicate{totalDuplicates !== 1 ? "s" : ""}{" "}
+              Detected
             </p>
-            <p className="text-xs">
-              Posts with matching Description, Topics, and Image URLs will not be
-              imported. Click "Continue Anyway" to skip duplicates and import only new
-              posts.
-            </p>
+            <div className="text-xs space-y-1">
+              {exactDuplicates > 0 && (
+                <p>
+                  🔴 <strong>{exactDuplicates}</strong> Exact duplicate
+                  {exactDuplicates !== 1 ? "s" : ""}
+                  (same text, topic, and images)
+                </p>
+              )}
+              {contentOnlyDuplicates > 0 && (
+                <p>
+                  🟡 <strong>{contentOnlyDuplicates}</strong> Content duplicate
+                  {contentOnlyDuplicates !== 1 ? "s" : ""}
+                  (same text only, different images)
+                </p>
+              )}
+              <p className="mt-2">
+                Review the duplicates below. Consider updating the content of
+                content-only duplicates before importing to maintain variety in
+                your posts.
+              </p>
+            </div>
           </div>
 
           {/* Duplicates List */}
           <div className="space-y-3 max-h-96 overflow-y-auto">
             {duplicateGroups.map((group, idx) => (
-              <div key={idx} className="p-3 bg-gray-50 border rounded-lg space-y-2">
-                <div className="text-xs font-medium text-gray-600">
-                  Row {group.index + 2} (Duplicate with {group.matches.length} existing
-                  post{group.matches.length !== 1 ? "s" : ""})
+              <div
+                key={idx}
+                className="p-3 bg-gray-50 border rounded-lg space-y-2"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-medium text-gray-600">
+                    Row {group.index + 2} (Duplicate with {group.matches.length}{" "}
+                    existing post{group.matches.length !== 1 ? "s" : ""})
+                  </div>
+                  <span
+                    className={`text-xs px-2 py-1 rounded font-medium ${
+                      group.duplicateType === "EXACT"
+                        ? "bg-red-100 text-red-700"
+                        : "bg-yellow-100 text-yellow-700"
+                    }`}
+                  >
+                    {group.duplicateType === "EXACT"
+                      ? "🔴 Exact"
+                      : "🟡 Content Only"}
+                  </span>
                 </div>
 
                 {/* New Post Info */}
+                {group.content && (
+                  <div className="text-sm">
+                    <span className="font-medium text-gray-700">Content:</span>
+                    <p className="text-gray-600 line-clamp-2 mt-0.5 text-xs">
+                      {group.content}
+                    </p>
+                  </div>
+                )}
+
                 {group.description && (
                   <div className="text-sm">
-                    <span className="font-medium text-gray-700">Description:</span>
+                    <span className="font-medium text-gray-700">
+                      Description:
+                    </span>
                     <p className="text-gray-600 line-clamp-2 mt-0.5">
                       {group.description}
                     </p>
@@ -122,7 +175,10 @@ export const DuplicatePostsModal: React.FC<DuplicatePostsModalProps> = ({
                     Matches:
                   </p>
                   {group.matches.map((match, i) => (
-                    <div key={i} className="text-xs text-gray-600 bg-white p-2 rounded mb-1">
+                    <div
+                      key={i}
+                      className="text-xs text-gray-600 bg-white p-2 rounded mb-1"
+                    >
                       <p className="font-medium">Post {i + 1}:</p>
                       <p className="text-gray-500 line-clamp-1 mt-0.5">
                         {match.comment || match.content}

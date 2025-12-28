@@ -378,9 +378,11 @@ export class ExcelService {
     success: boolean;
     duplicates: Array<{
       rowIndex: number;
+      content: string;
       description?: string;
       topic?: string;
       imageUrls?: string[];
+      duplicateType: "EXACT" | "CONTENT_ONLY";
       matches: Array<{
         _id: string;
         content: string;
@@ -426,9 +428,11 @@ export class ExcelService {
 
       const duplicates: Array<{
         rowIndex: number;
+        content: string;
         description?: string;
         topic?: string;
         imageUrls?: string[];
+        duplicateType: "EXACT" | "CONTENT_ONLY";
         matches: any[];
       }> = [];
       let rowCount = 0;
@@ -447,6 +451,7 @@ export class ExcelService {
             rowData[header] = cell.value;
           });
 
+          const content = rowData["nội dung bài post"] || "";
           const comment = rowData["comment"];
           const topic = rowData["chủ đề"];
           const mergeLinks = rowData["gộp link"];
@@ -474,8 +479,13 @@ export class ExcelService {
 
           const uniqueImageUrls = [...new Set(imageUrls)];
 
-          // Check for duplicates
-          const matches = existingPosts.filter((existingPost) => {
+          // Normalize content for comparison
+          const normalizedContent = String(content || "")
+            .toLowerCase()
+            .trim();
+
+          // First check for exact duplicates (all fields match)
+          const exactMatches = existingPosts.filter((existingPost) => {
             const existingDesc = String(existingPost.comment || "")
               .toLowerCase()
               .trim();
@@ -504,13 +514,15 @@ export class ExcelService {
             );
           });
 
-          if (matches.length > 0) {
+          if (exactMatches.length > 0) {
             duplicates.push({
               rowIndex: rowNumber - 1, // Adjust to 0-based index
+              content,
               description: comment,
               topic: topic ? String(topic) : undefined,
               imageUrls: uniqueImageUrls,
-              matches: matches.map((p) => ({
+              duplicateType: "EXACT",
+              matches: exactMatches.map((p) => ({
                 _id: p._id,
                 content: p.content,
                 comment: p.comment,
@@ -518,6 +530,32 @@ export class ExcelService {
                 imageUrls: p.imageUrls,
               })),
             });
+          } else if (normalizedContent) {
+            // If no exact match, check for content-only duplicates
+            const contentMatches = existingPosts.filter((existingPost) => {
+              const existingContent = String(existingPost.content || "")
+                .toLowerCase()
+                .trim();
+              return existingContent === normalizedContent;
+            });
+
+            if (contentMatches.length > 0) {
+              duplicates.push({
+                rowIndex: rowNumber - 1,
+                content,
+                description: comment,
+                topic: topic ? String(topic) : undefined,
+                imageUrls: uniqueImageUrls,
+                duplicateType: "CONTENT_ONLY",
+                matches: contentMatches.map((p) => ({
+                  _id: p._id,
+                  content: p.content,
+                  comment: p.comment,
+                  topic: p.topic,
+                  imageUrls: p.imageUrls,
+                })),
+              });
+            }
           }
         }
       );
