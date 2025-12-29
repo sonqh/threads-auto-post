@@ -13,6 +13,7 @@ import { ThreadsService } from "./services/ThreadsService.js";
 import { schedulerService } from "./services/SchedulerService.js";
 import { eventDrivenScheduler } from "./services/EventDrivenScheduler.js";
 import { idempotencyService } from "./services/IdempotencyService.js";
+import { postQueue } from "./queue/postQueue.js";
 import { log } from "./config/logger.js";
 
 dotenv.config();
@@ -24,12 +25,13 @@ const WORKER_ID = `worker-${process.pid}-${Date.now()}`;
 const worker = new Worker(
   "post-publishing",
   async (job) => {
-    const { postId, commentOnlyRetry } = job.data;
+    const { postId, commentOnlyRetry, accountId } = job.data;
 
     log.info(
       `📤 Processing ${
         commentOnlyRetry ? "comment retry for" : "post"
-      } ${postId}...`
+      } ${postId}...`,
+      { accountId: accountId || "from-post" }
     );
 
     try {
@@ -125,10 +127,17 @@ const worker = new Worker(
         }
 
         // ===== Step 5: Initialize adapter with correct credentials =====
+        // Priority: 1) accountId from job data, 2) post.threadsAccountId
+        const effectiveAccountId =
+          accountId || post.threadsAccountId?.toString();
         let adapter = new ThreadsAdapter();
-        if (post.threadsAccountId) {
+
+        if (effectiveAccountId) {
+          log.info(
+            `🔑 Looking up credential for account: ${effectiveAccountId}`
+          );
           const credential = await threadsService.getCredentialById(
-            post.threadsAccountId.toString()
+            effectiveAccountId
           );
           if (credential) {
             adapter = new ThreadsAdapter(
@@ -136,13 +145,20 @@ const worker = new Worker(
               credential.accessToken
             );
             log.info(
-              `Using account ${credential.threadsUserId} for post ${postId}`
+              `✅ Using account ${credential.threadsUserId} (${
+                credential.accountName || "unnamed"
+              }) for post ${postId}`
             );
           } else {
-            log.warn(
-              `Credential ${post.threadsAccountId} not found, using default`
+            log.error(
+              `❌ Credential ${effectiveAccountId} not found! Falling back to default .env credentials`
             );
+            // Don't silently fail - log clearly that we're using fallback
           }
+        } else {
+          log.warn(
+            `⚠️ No account specified for post ${postId}, using default .env credentials`
+          );
         }
 
         // ===== Step 6: Update content hash and status =====
@@ -204,6 +220,43 @@ const worker = new Worker(
               log.warn(
                 `Post ${postId} published but comment failed: ${result.commentResult.error}`
               );
+
+              // ===== AUTO-RETRY: Schedule comment retry for server errors =====
+              const isServerError =
+                result.commentResult.error?.includes("500") ||
+                result.commentResult.error?.includes("Internal Server Error") ||
+                result.commentResult.error?.includes("unexpected error") ||
+                result.commentResult.error?.includes("retry");
+
+              const maxRetries = parseInt(
+                process.env.COMMENT_MAX_RETRIES || "3",
+                10
+              );
+              if (isServerError && post.commentRetryCount < maxRetries) {
+                const retryDelay = 60000 * post.commentRetryCount; // 1min, 2min, 3min...
+                log.info(
+                  `📅 Scheduling comment retry in ${
+                    retryDelay / 1000
+                  }s for post ${postId}`
+                );
+
+                await postQueue.add(
+                  "publish-post",
+                  {
+                    postId: post._id.toString(),
+                    commentOnlyRetry: true,
+                    accountId: post.threadsAccountId?.toString(),
+                  },
+                  {
+                    delay: retryDelay,
+                    jobId: `comment-retry-${post._id}-${Date.now()}`,
+                    attempts: 1, // Single attempt per retry job
+                    removeOnComplete: { age: 3600 },
+                    removeOnFail: { age: 86400 },
+                  }
+                );
+                log.success(`✅ Comment retry scheduled for post ${postId}`);
+              }
             }
           } else if (!post.comment) {
             post.commentStatus = CommentStatus.NONE;
@@ -313,8 +366,55 @@ const worker = new Worker(
       max: 10,
       duration: 60000, // 10 requests per minute
     },
+    // Stalled job handling - critical for preventing stuck jobs
+    stalledInterval: 30000, // Check for stalled jobs every 30 seconds
+    maxStalledCount: 2, // Move job to failed after 2 stalled detections
+    lockDuration: 60000, // Jobs are locked for 60 seconds
   }
 );
+
+// Handle stalled jobs - this is critical for recovering from worker crashes
+worker.on("stalled", async (jobId) => {
+  log.warn(
+    `⚠️ Job ${jobId} has stalled! Worker may have crashed during processing.`
+  );
+
+  try {
+    // Try to recover the post status using the queue to get job info
+    const job = await postQueue.getJob(jobId);
+    if (job?.data?.postId) {
+      const post = await Post.findById(job.data.postId);
+      if (post && post.status === PostStatus.PUBLISHING) {
+        // Check if post was actually published (has threadsPostId)
+        if (post.threadsPostId) {
+          post.status = PostStatus.PUBLISHED;
+          log.info(
+            `Recovered stalled job ${jobId} - post was actually published`
+          );
+        } else {
+          post.status = PostStatus.FAILED;
+          post.error = "Job stalled - worker crashed during processing";
+          log.error(`Recovered stalled job ${jobId} - marked as failed`);
+        }
+        post.publishingProgress = {
+          status: post.status === PostStatus.PUBLISHED ? "published" : "failed",
+          completedAt: new Date(),
+          currentStep: post.threadsPostId
+            ? "Recovered from stall"
+            : "Stalled - worker crashed",
+          error: post.threadsPostId
+            ? undefined
+            : "Worker crashed during processing",
+        };
+        await post.save();
+      }
+    }
+  } catch (error) {
+    log.error(`Failed to recover stalled job ${jobId}:`, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
 
 /**
  * Handle comment-only retry for posts that published successfully but comment failed
@@ -388,6 +488,46 @@ async function handleCommentOnlyRetry(post: any, job: any) {
       log.warn(
         `Comment retry failed for post ${postId}: ${commentResult.error}`
       );
+
+      // ===== AUTO-RETRY: Schedule another retry for server errors =====
+      const isServerError =
+        commentResult.error?.includes("500") ||
+        commentResult.error?.includes("Internal Server Error") ||
+        commentResult.error?.includes("unexpected error") ||
+        commentResult.error?.includes("retry");
+
+      if (isServerError && post.commentRetryCount < maxRetries) {
+        const retryDelay = 60000 * (post.commentRetryCount + 1); // Increasing delay
+        log.info(
+          `📅 Scheduling another comment retry in ${
+            retryDelay / 1000
+          }s for post ${postId} (attempt ${
+            post.commentRetryCount + 1
+          }/${maxRetries})`
+        );
+
+        await postQueue.add(
+          "publish-post",
+          {
+            postId: post._id.toString(),
+            commentOnlyRetry: true,
+            accountId: post.threadsAccountId?.toString(),
+          },
+          {
+            delay: retryDelay,
+            jobId: `comment-retry-${post._id}-${Date.now()}`,
+            attempts: 1,
+            removeOnComplete: { age: 3600 },
+            removeOnFail: { age: 86400 },
+          }
+        );
+        log.success(
+          `✅ Comment retry ${
+            post.commentRetryCount + 1
+          } scheduled for post ${postId}`
+        );
+      }
+
       // Don't throw - we don't want to rollback the published post
       return {
         success: false,
@@ -403,6 +543,40 @@ async function handleCommentOnlyRetry(post: any, job: any) {
     await post.save();
 
     log.error(`Comment retry error for post ${postId}: ${errorMessage}`);
+
+    // ===== AUTO-RETRY: Schedule retry for unexpected errors too =====
+    const isServerError =
+      errorMessage.includes("500") ||
+      errorMessage.includes("Internal Server Error") ||
+      errorMessage.includes("unexpected error") ||
+      errorMessage.includes("ETIMEDOUT") ||
+      errorMessage.includes("ECONNRESET");
+
+    if (isServerError && post.commentRetryCount < maxRetries) {
+      const retryDelay = 60000 * (post.commentRetryCount + 1);
+      log.info(
+        `📅 Scheduling comment retry after error in ${
+          retryDelay / 1000
+        }s for post ${postId}`
+      );
+
+      await postQueue.add(
+        "publish-post",
+        {
+          postId: post._id.toString(),
+          commentOnlyRetry: true,
+          accountId: post.threadsAccountId?.toString(),
+        },
+        {
+          delay: retryDelay,
+          jobId: `comment-retry-${post._id}-${Date.now()}`,
+          attempts: 1,
+          removeOnComplete: { age: 3600 },
+          removeOnFail: { age: 86400 },
+        }
+      );
+    }
+
     return { success: false, commentFailed: true, error: errorMessage };
   }
 }
@@ -483,5 +657,44 @@ const startWorker = async () => {
     process.exit(1);
   }
 };
+
+// ===== GRACEFUL SHUTDOWN =====
+// Prevent jobs from getting stuck when worker restarts
+const gracefulShutdown = async (signal: string) => {
+  log.warn(`⚠️ Received ${signal}. Initiating graceful shutdown...`);
+
+  try {
+    // Close workers gracefully - wait for current jobs to complete
+    log.info("Closing post publishing worker...");
+    await worker.close();
+
+    log.info("Closing scheduler worker...");
+    await schedulerWorker.close();
+
+    log.success("✅ Workers closed gracefully");
+    process.exit(0);
+  } catch (error) {
+    log.error("Error during graceful shutdown:", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    process.exit(1);
+  }
+};
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+
+// Handle uncaught errors
+process.on("uncaughtException", (error) => {
+  log.error("Uncaught Exception:", {
+    error: error.message,
+    stack: error.stack,
+  });
+  gracefulShutdown("uncaughtException");
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  log.error("Unhandled Rejection:", { reason: String(reason) });
+});
 
 startWorker();

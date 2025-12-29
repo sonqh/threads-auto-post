@@ -195,10 +195,13 @@ export class EventDrivenScheduler {
     }`;
 
     try {
-      // Add to publishing queue
+      // Add to publishing queue - IMPORTANT: Include accountId in job data
       await postQueue.add(
         "publish-post",
-        { postId: post._id },
+        {
+          postId: post._id,
+          accountId: post.threadsAccountId?.toString(), // Pass account ID to worker
+        },
         {
           jobId,
           attempts: 3,
@@ -222,7 +225,11 @@ export class EventDrivenScheduler {
       };
       await post.save();
 
-      log.success(`  ✅ Queued (${jobId})`);
+      log.success(
+        `  ✅ Queued (${jobId}) for account: ${
+          post.threadsAccountId || "default"
+        }`
+      );
     } catch (queueError: any) {
       if (queueError.message?.includes("already exists")) {
         log.info(`  ⏭️  Job already exists in queue`);
@@ -248,7 +255,15 @@ export class EventDrivenScheduler {
     const jobId = `scheduled-${post._id}-${Date.now()}`;
 
     try {
-      await postQueue.add("publish-post", { postId: post._id }, { jobId });
+      // IMPORTANT: Include accountId in job data for recurring posts too
+      await postQueue.add(
+        "publish-post",
+        {
+          postId: post._id,
+          accountId: post.threadsAccountId?.toString(),
+        },
+        { jobId }
+      );
 
       // Update status and schedule next run
       post.jobId = jobId;
@@ -262,7 +277,9 @@ export class EventDrivenScheduler {
       await post.save();
 
       log.success(
-        `  ✅ Queued (recurring), next: ${nextRunTime.toISOString()}`
+        `  ✅ Queued (recurring) for account: ${
+          post.threadsAccountId || "default"
+        }, next: ${nextRunTime.toISOString()}`
       );
     } catch (queueError: any) {
       if (queueError.message?.includes("already exists")) {

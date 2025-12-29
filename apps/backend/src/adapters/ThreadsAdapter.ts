@@ -540,43 +540,78 @@ export class ThreadsAdapter extends BasePlatformAdapter {
       : "IMAGE";
   }
 
-  private async publishContainer(containerId: string): Promise<string> {
-    try {
-      log.info(`📤 Publishing container`, {
-        containerId,
-        url: `${this.baseUrl}/${this.userId}/threads_publish`,
-      });
+  private async publishContainer(
+    containerId: string,
+    maxRetries: number = 3
+  ): Promise<string> {
+    let lastError: Error | null = null;
 
-      const payload = {
-        creation_id: containerId,
-        access_token: this.accessToken,
-      };
-
-      const response = await axios.post(
-        `${this.baseUrl}/${this.userId}/threads_publish`,
-        payload
-      );
-
-      log.info(` Container published`, {
-        publishedId: response.data.id,
-        status: response.status,
-        containerId,
-      });
-
-      return response.data.id;
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        log.error(`Failed to publish container`, {
-          status: error.response?.status,
-          statusText: error.response?.statusText,
-          errorMessage: error.response?.data?.error?.message,
-          errorCode: error.response?.data?.error?.code,
-          errorUserMsg: error.response?.data?.error?.error_user_msg,
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        log.info(`📤 Publishing container (attempt ${attempt}/${maxRetries})`, {
           containerId,
           url: `${this.baseUrl}/${this.userId}/threads_publish`,
         });
+
+        const payload = {
+          creation_id: containerId,
+          access_token: this.accessToken,
+        };
+
+        const response = await axios.post(
+          `${this.baseUrl}/${this.userId}/threads_publish`,
+          payload
+        );
+
+        log.info(` Container published`, {
+          publishedId: response.data.id,
+          status: response.status,
+          containerId,
+          attempt,
+        });
+
+        return response.data.id;
+      } catch (error) {
+        lastError = error as Error;
+
+        if (axios.isAxiosError(error)) {
+          const status = error.response?.status;
+          const errorMessage =
+            error.response?.data?.error?.message || error.message;
+
+          log.error(
+            `Failed to publish container (attempt ${attempt}/${maxRetries})`,
+            {
+              status,
+              statusText: error.response?.statusText,
+              errorMessage,
+              errorCode: error.response?.data?.error?.code,
+              errorUserMsg: error.response?.data?.error?.error_user_msg,
+              containerId,
+              url: `${this.baseUrl}/${this.userId}/threads_publish`,
+            }
+          );
+
+          // Retry on 5xx server errors or specific transient errors
+          const isRetryable = status && status >= 500 && status < 600;
+          const isTransientError =
+            errorMessage?.toLowerCase().includes("unexpected error") ||
+            errorMessage?.toLowerCase().includes("retry");
+
+          if ((isRetryable || isTransientError) && attempt < maxRetries) {
+            const delay = 5000 * attempt; // 5s, 10s, 15s
+            log.warn(`⏳ Retrying in ${delay / 1000}s due to server error...`);
+            await new Promise((resolve) => setTimeout(resolve, delay));
+            continue;
+          }
+        }
+
+        // Non-retryable error or max retries reached
+        throw error;
       }
-      throw error;
     }
+
+    // Should not reach here, but just in case
+    throw lastError || new Error("Failed to publish container after retries");
   }
 }

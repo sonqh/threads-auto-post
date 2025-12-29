@@ -139,26 +139,43 @@ export class PostService {
       post.publishingProgress.currentStep = "Fetching credentials...";
       await post.save();
 
-      // Use threadsAccountId if available, otherwise fall back to default
+      // Determine which account to use - Priority: 1) passed accountId, 2) post.threadsAccountId
+      const effectiveAccountId = accountId || post.threadsAccountId;
       let credential = null;
 
-      if (accountId || post.threadsAccountId) {
-        credential = await threadsService.getCredentialById(
-          accountId || post.threadsAccountId || ""
-        );
+      if (effectiveAccountId) {
         logger.info(
-          `Using account-specific credential for Threads user ID: ${credential?.threadsUserId}`,
-          { postId, accountId: accountId || post.threadsAccountId }
+          `Looking up credential for account: ${effectiveAccountId}`,
+          { postId }
         );
+        credential = await threadsService.getCredentialById(effectiveAccountId);
+
+        if (credential) {
+          logger.info(
+            `✅ Using account-specific credential: ${
+              credential.threadsUserId
+            } (${credential.accountName || "unnamed"})`,
+            { postId, accountId: effectiveAccountId }
+          );
+        } else {
+          logger.error(
+            `❌ Credential ${effectiveAccountId} not found in database!`,
+            { postId, accountId: effectiveAccountId }
+          );
+          // Don't silently fall back - this is likely a configuration error
+          throw new Error(
+            `Credential not found for account ID: ${effectiveAccountId}. Please check your account configuration.`
+          );
+        }
       }
 
-      // Only fall back to environment credential if no account was specified
-      if (!credential) {
+      // Only fall back to environment credential if NO account was specified at all
+      if (!credential && !effectiveAccountId) {
+        logger.warn(
+          `⚠️ No account specified for post ${postId}, using default .env credentials`
+        );
         credential = await threadsService.getValidCredential(
           process.env.THREADS_USER_ID || ""
-        );
-        logger.info(
-          `Using default credential for Threads user ID: ${credential.threadsUserId}`
         );
       }
 
