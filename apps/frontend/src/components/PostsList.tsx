@@ -13,7 +13,6 @@ import { EditPostModal } from "./EditPostModal";
 import { SchedulerModal } from "./SchedulerModal";
 import { BulkSchedulerModal } from "./BulkSchedulerModal";
 import { Pagination } from "./Pagination";
-import { AccountSelector } from "./AccountSelector";
 import { Button } from "./ui/button";
 import {
   Card,
@@ -22,6 +21,13 @@ import {
   CardHeader,
   CardTitle,
 } from "./ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
 import {
   PostStatus,
   PostType,
@@ -543,30 +549,48 @@ export const PostsList: React.FC = () => {
 
         {/* Account & Type Filters */}
         <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-          <AccountSelector
-            // credentials={credentials}
-            // selectedAccountId={selectedAccountId}
-            onSelect={(id) =>
-              setSelectedAccount(typeof id === "string" ? id : id[0])
-            }
-            className="col-span-1"
-          />
+          {/* Account Selector Dropdown */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Select Account</label>
+            <Select
+              value={selectedAccountId || ""}
+              onValueChange={(id) => setSelectedAccount(id)}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select an account..." />
+              </SelectTrigger>
+              <SelectContent>
+                {credentials.map((cred) => (
+                  <SelectItem key={cred.id} value={cred.id}>
+                    {cred.accountName || cred.threadsUserId}{" "}
+                    {cred.isDefault ? "(Default)" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
+          {/* Post Type Dropdown */}
           <div className="space-y-2">
             <label className="text-sm font-medium">Post Type</label>
-            <div className="flex flex-wrap gap-2">
-              {["", ...Object.values(PostType)].map((type) => (
-                <Button
-                  key={type || "all-types"}
-                  variant={postTypeFilter === type ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setPostTypeFilter(type)}
-                  className="text-xs"
-                >
-                  {type || "All Types"}
-                </Button>
-              ))}
-            </div>
+            <Select
+              value={postTypeFilter || "all-types"}
+              onValueChange={(type) =>
+                setPostTypeFilter(type === "all-types" ? "" : type)
+              }
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="All Types" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all-types">All Types</SelectItem>
+                {Object.values(PostType).map((type) => (
+                  <SelectItem key={type} value={type}>
+                    {type}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
       </CardHeader>
