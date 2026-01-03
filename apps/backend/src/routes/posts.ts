@@ -17,6 +17,7 @@ router.get("/", async (req, res) => {
       skip: Number(skip),
       accountId: accountId as string | undefined,
     };
+    console.log("options == ", options);
     const result = await postService.getPosts(options);
     res.json({
       posts: result.posts,

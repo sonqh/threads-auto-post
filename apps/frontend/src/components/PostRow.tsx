@@ -7,6 +7,7 @@ import { TableCell, TableRow as TableRowComponent } from "./ui/table";
 import { ProgressSpinner } from "./ProgressSpinner";
 import { StuckPostRecoveryModal } from "./StuckPostRecoveryModal";
 import type { Post, PostStatusType } from "@/types";
+import type { StoredCredential } from "@/hooks/useCredentials";
 
 interface PostRowProps {
   post: Post;
@@ -20,7 +21,7 @@ interface PostRowProps {
   onFixStuck?: (postId: string) => void;
   onPostRecovered?: (post: Post) => void;
   publishing?: boolean;
-  credentials?: Array<{ id: string; accountName: string }>;
+  credentials?: StoredCredential[];
 }
 
 const getStatusBadge = (status: PostStatusType) => {
@@ -59,13 +60,26 @@ export const PostRow: React.FC<PostRowProps> = ({
   const [showRecoveryModal, setShowRecoveryModal] = useState(false);
   const [isStuckPublishing, setIsStuckPublishing] = useState(false);
 
-  // Get account name from account ID
+  // Get account name from account ID or default account
   const getAccountName = () => {
-    if (!post.threadsAccountId || !credentials) {
-      return "Default";
+    if (!credentials || credentials.length === 0) {
+      return "No Account";
     }
-    const account = credentials.find((c) => c.id === post.threadsAccountId);
-    return account?.accountName || "Unknown Account";
+
+    // If post has a specific account ID, find and return it
+    if (post.threadsAccountId) {
+      const account = credentials.find((c) => c.id === post.threadsAccountId);
+      return account?.accountName || "Unknown Account";
+    }
+
+    // If no account ID, find and return the default account
+    const defaultAccount = credentials.find((c) => c.isDefault);
+    if (defaultAccount) {
+      return defaultAccount.accountName;
+    }
+
+    // Fallback to first account if no default found
+    return credentials[0]?.accountName || "No Account";
   };
 
   const canPublish = post.status === "DRAFT";

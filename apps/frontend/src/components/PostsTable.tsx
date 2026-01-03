@@ -8,6 +8,7 @@ import {
   TableHead,
   TableRow as TableRowComponent,
 } from "./ui/table";
+import type { StoredCredential } from "@/hooks/useCredentials";
 
 interface PostsTableProps {
   posts: Post[];
@@ -21,7 +22,7 @@ interface PostsTableProps {
   onFixStuck?: (postId: string) => void;
   onPostRecovered?: (post: Post) => void;
   publishingIds?: Set<string>;
-  credentials?: Array<{ id: string; accountName: string }>;
+  credentials?: StoredCredential[];
 }
 
 export const PostsTable = ({

@@ -12,12 +12,13 @@ import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { TagInput } from "./TagInput";
 import { validateLink, validateLinks } from "@/lib/linkValidation";
+import type { StoredCredential } from "@/hooks/useCredentials";
 
 interface EditPostModalProps {
   post: Post;
   onClose: () => void;
   onSave: (updatedPost: Partial<Post>) => Promise<void>;
-  credentials?: Array<{ id: string; accountName: string }>;
+  credentials?: StoredCredential[];
 }
 
 // Sanitize and validate image URLs
