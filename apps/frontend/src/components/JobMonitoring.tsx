@@ -24,10 +24,10 @@ interface JobRecord {
   failedReason?: string;
   attemptsMade: number;
   maxAttempts: number;
-  timestamp?: number;
-  processedOn?: number;
-  finishedOn?: number;
-  scheduledAt?: number;
+  timestamp?: number | string;
+  processedOn?: number | string;
+  finishedOn?: number | string;
+  scheduledAt?: number | string;
 }
 
 interface RecentJobsData {
@@ -68,6 +68,33 @@ interface JobDetailsModalProps {
   onRetry?: (postId: string) => void;
   onCancel?: (jobId: string) => void;
 }
+
+const formatTimestamp = (timestamp?: number | string | Date): string => {
+  if (!timestamp) return "";
+
+  let date: Date;
+  if (timestamp instanceof Date) {
+    date = timestamp;
+  } else if (typeof timestamp === "string") {
+    date = new Date(timestamp);
+  } else {
+    date = new Date(timestamp);
+  }
+
+  if (isNaN(date.getTime())) {
+    return "Invalid date";
+  }
+
+  return date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit", // 24-hour format, zero-padded
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23", // Use 24-hour time, no AM/PM
+  });
+};
 
 // Job Details Modal Component
 const JobDetailsModal: React.FC<JobDetailsModalProps> = ({
@@ -140,7 +167,7 @@ const JobDetailsModal: React.FC<JobDetailsModalProps> = ({
                 </p>
                 <p className="text-sm flex items-center gap-1">
                   <Clock size={14} className="text-blue-500" />
-                  {new Date(job.scheduledAt).toLocaleString()}
+                  {formatTimestamp(job.scheduledAt)}
                 </p>
               </div>
             )}
@@ -149,9 +176,7 @@ const JobDetailsModal: React.FC<JobDetailsModalProps> = ({
                 <p className="text-xs font-semibold text-muted-foreground">
                   Created
                 </p>
-                <p className="text-sm">
-                  {new Date(job.timestamp).toLocaleString()}
-                </p>
+                <p className="text-sm">{formatTimestamp(job.timestamp)}</p>
               </div>
             )}
             {job.processedOn && (
@@ -159,9 +184,7 @@ const JobDetailsModal: React.FC<JobDetailsModalProps> = ({
                 <p className="text-xs font-semibold text-muted-foreground">
                   Started
                 </p>
-                <p className="text-sm">
-                  {new Date(job.processedOn).toLocaleString()}
-                </p>
+                <p className="text-sm">{formatTimestamp(job.processedOn)}</p>
               </div>
             )}
             {job.finishedOn && (
@@ -169,9 +192,7 @@ const JobDetailsModal: React.FC<JobDetailsModalProps> = ({
                 <p className="text-xs font-semibold text-muted-foreground">
                   Completed
                 </p>
-                <p className="text-sm">
-                  {new Date(job.finishedOn).toLocaleString()}
-                </p>
+                <p className="text-sm">{formatTimestamp(job.finishedOn)}</p>
               </div>
             )}
           </div>
@@ -341,9 +362,6 @@ export const JobMonitoring: React.FC = () => {
         : postData.content
       : "No content";
 
-    const scheduledTime = job.scheduledAt ? new Date(job.scheduledAt) : null;
-    const isScheduled = job.state === "delayed" && scheduledTime;
-
     return (
       <div
         className="p-3 border rounded-lg hover:bg-gray-50 cursor-pointer transition-colors flex items-center justify-between group"
@@ -364,14 +382,14 @@ export const JobMonitoring: React.FC = () => {
             {contentPreview}
           </p>
           <p className="text-xs text-muted-foreground mt-1">
-            {isScheduled ? (
+            {job.scheduledAt ? (
               <span className="flex items-center gap-1">
                 <Clock size={12} />
-                Scheduled: {scheduledTime.toLocaleString()}
+                Will post: {formatTimestamp(job.scheduledAt)}
               </span>
             ) : (
               job.timestamp && (
-                <span>Added: {new Date(job.timestamp).toLocaleString()}</span>
+                <span>Added: {formatTimestamp(job.timestamp)}</span>
               )
             )}
           </p>
@@ -411,7 +429,7 @@ export const JobMonitoring: React.FC = () => {
           </p>
           {lastUpdated && (
             <p className="text-xs text-muted-foreground mt-1">
-              Last updated: {lastUpdated.toLocaleTimeString()}
+              Last updated: {formatTimestamp(lastUpdated)}
             </p>
           )}
         </div>
@@ -620,9 +638,7 @@ export const JobMonitoring: React.FC = () => {
                   {health.lastCompletedJob && (
                     <p className="text-xs text-red-700 mt-2">
                       Last completed:{" "}
-                      {new Date(
-                        health.lastCompletedJob.timestamp
-                      ).toLocaleTimeString()}
+                      {formatTimestamp(health.lastCompletedJob.timestamp)}
                     </p>
                   )}
                 </div>
