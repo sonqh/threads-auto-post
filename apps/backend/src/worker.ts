@@ -28,35 +28,32 @@ const worker = new Worker(
     const { postId, commentOnlyRetry, accountId } = job.data;
 
     log.info(
-      `📤 Processing ${
-        commentOnlyRetry ? "comment retry for" : "post"
+      `📤 Processing ${commentOnlyRetry ? "comment retry for" : "post"
       } ${postId}...`,
       { accountId: accountId || "from-post" }
     );
 
     try {
       // ===== Step 1: Pre-publish checks =====
-      const canPublishResult = await idempotencyService.canPublish(postId);
+      // COMMENTED OUT: All idempotency checks disabled
+      // const canPublishResult = await idempotencyService.canPublish(postId);
+      // if (!canPublishResult.canPublish) {
+      //   if (
+      //     canPublishResult.reason === "Post already published" &&
+      //     commentOnlyRetry
+      //   ) {
+      //     log.info(`Comment-only retry for published post ${postId}`);
+      //   } else {
+      //     log.info(`Skipping post ${postId}: ${canPublishResult.reason}`);
+      //     return {
+      //       success: true,
+      //       skipped: true,
+      //       reason: canPublishResult.reason,
+      //     };
+      //   }
+      // }
 
-      if (!canPublishResult.canPublish) {
-        // Check if this is a comment-only retry for an already published post
-        if (
-          canPublishResult.reason === "Post already published" &&
-          commentOnlyRetry
-        ) {
-          log.info(`Comment-only retry for published post ${postId}`);
-          // Fall through to comment retry logic below
-        } else {
-          log.info(`Skipping post ${postId}: ${canPublishResult.reason}`);
-          return {
-            success: true,
-            skipped: true,
-            reason: canPublishResult.reason,
-          };
-        }
-      }
-
-      const post = canPublishResult.post || (await Post.findById(postId));
+      const post = await Post.findById(postId);
       if (!post) {
         throw new Error(`Post ${postId} not found`);
       }
@@ -71,45 +68,68 @@ const worker = new Worker(
       }
 
       // ===== Step 3: Duplicate detection =====
-      const duplicateCheck = await idempotencyService.checkForDuplicate(
-        post.content,
-        post.imageUrls,
-        post.videoUrl,
-        postId
-      );
+      // COMMENTED OUT: Duplicate detection disabled
+      // const duplicateCheck = await idempotencyService.checkForDuplicate(
+      //   post.content,
+      //   post.imageUrls,
+      //   post.videoUrl,
+      //   postId
+      // );
+      // if (duplicateCheck.isDuplicate) {
+      //   log.warn(
+      //     `🚫 Duplicate detected for post ${postId}: ${duplicateCheck.message}`
+      //   );
+      //   const freshPost = await Post.findById(postId);
+      //   if (freshPost) {
+      //     freshPost.status = PostStatus.FAILED;
+      //     freshPost.error = duplicateCheck.message;
+      //     await freshPost.save();
+      //   }
+      //   return {
+      //     success: false,
+      //     duplicate: true,
+      //     message: duplicateCheck.message,
+      //   };
+      // }
 
-      if (duplicateCheck.isDuplicate) {
-        log.warn(
-          `🚫 Duplicate detected for post ${postId}: ${duplicateCheck.message}`
-        );
-
-        // Refresh post for latest version
-        const freshPost = await Post.findById(postId);
-        if (freshPost) {
-          freshPost.status = PostStatus.FAILED;
-          freshPost.error = duplicateCheck.message;
-          await freshPost.save();
-        }
-
-        return {
-          success: false,
-          duplicate: true,
-          message: duplicateCheck.message,
-        };
-      }
+      // Second check: Content posted recently (within idempotency window for safety)
+      // COMMENTED OUT: Recent content check disabled
+      // const recentContentCheck =
+      //   await idempotencyService.checkRecentPostContent(
+      //     post.content,
+      //     post.imageUrls,
+      //     post.videoUrl,
+      //     postId
+      //   );
+      // if (recentContentCheck.isDuplicate) {
+      //   log.warn(
+      //     `🚫 Recent duplicate content detected for post ${postId}: ${recentContentCheck.message}`
+      //   );
+      //   const freshPost = await Post.findById(postId);
+      //   if (freshPost) {
+      //     freshPost.status = PostStatus.FAILED;
+      //     freshPost.error = recentContentCheck.message;
+      //     await freshPost.save();
+      //   }
+      //   return {
+      //     success: false,
+      //     duplicate: true,
+      //     message: recentContentCheck.message,
+      //   };
+      // }
 
       // ===== Step 4: Acquire execution lock =====
-      const lockResult = await idempotencyService.acquireExecutionLock(
-        postId,
-        WORKER_ID
-      );
-      if (!lockResult.acquired) {
-        log.warn(
-          `⏳ Cannot acquire lock for post ${postId}: ${lockResult.reason}`
-        );
-        // Don't fail - another worker is processing
-        return { success: false, locked: true, reason: lockResult.reason };
-      }
+      // COMMENTED OUT: Execution lock disabled
+      // const lockResult = await idempotencyService.acquireExecutionLock(
+      //   postId,
+      //   WORKER_ID
+      // );
+      // if (!lockResult.acquired) {
+      //   log.warn(
+      //     `⏳ Cannot acquire lock for post ${postId}: ${lockResult.reason}`
+      //   );
+      //   return { success: false, locked: true, reason: lockResult.reason };
+      // }
 
       try {
         // Refresh post after lock acquisition to get latest version
@@ -145,8 +165,7 @@ const worker = new Worker(
               credential.accessToken
             );
             log.info(
-              `✅ Using account ${credential.threadsUserId} (${
-                credential.accountName || "unnamed"
+              `✅ Using account ${credential.threadsUserId} (${credential.accountName || "unnamed"
               }) for post ${postId}`
             );
           } else {
@@ -235,8 +254,7 @@ const worker = new Worker(
               if (isServerError && post.commentRetryCount < maxRetries) {
                 const retryDelay = 60000 * post.commentRetryCount; // 1min, 2min, 3min...
                 log.info(
-                  `📅 Scheduling comment retry in ${
-                    retryDelay / 1000
+                  `📅 Scheduling comment retry in ${retryDelay / 1000
                   }s for post ${postId}`
                 );
 
@@ -312,7 +330,8 @@ const worker = new Worker(
         }
       } finally {
         // Always release lock
-        await idempotencyService.releaseExecutionLock(postId);
+        // COMMENTED OUT: Lock release disabled
+        // await idempotencyService.releaseExecutionLock(postId);
       }
     } catch (error: unknown) {
       const errorMessage =
@@ -322,7 +341,8 @@ const worker = new Worker(
       });
 
       // Release lock if held
-      await idempotencyService.releaseExecutionLock(postId);
+      // COMMENTED OUT: Lock release disabled
+      // await idempotencyService.releaseExecutionLock(postId);
 
       // Rollback mechanism (only for non-published posts)
       const post = await Post.findById(postId);
@@ -499,10 +519,8 @@ async function handleCommentOnlyRetry(post: any, job: any) {
       if (isServerError && post.commentRetryCount < maxRetries) {
         const retryDelay = 60000 * (post.commentRetryCount + 1); // Increasing delay
         log.info(
-          `📅 Scheduling another comment retry in ${
-            retryDelay / 1000
-          }s for post ${postId} (attempt ${
-            post.commentRetryCount + 1
+          `📅 Scheduling another comment retry in ${retryDelay / 1000
+          }s for post ${postId} (attempt ${post.commentRetryCount + 1
           }/${maxRetries})`
         );
 
@@ -522,8 +540,7 @@ async function handleCommentOnlyRetry(post: any, job: any) {
           }
         );
         log.success(
-          `✅ Comment retry ${
-            post.commentRetryCount + 1
+          `✅ Comment retry ${post.commentRetryCount + 1
           } scheduled for post ${postId}`
         );
       }
@@ -555,8 +572,7 @@ async function handleCommentOnlyRetry(post: any, job: any) {
     if (isServerError && post.commentRetryCount < maxRetries) {
       const retryDelay = 60000 * (post.commentRetryCount + 1);
       log.info(
-        `📅 Scheduling comment retry after error in ${
-          retryDelay / 1000
+        `📅 Scheduling comment retry after error in ${retryDelay / 1000
         }s for post ${postId}`
       );
 

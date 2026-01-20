@@ -187,7 +187,7 @@ export class SchedulerService {
         return;
       }
 
-      log.success(`\n🎯 PROCESSING ${scheduledPosts.length} post(s):`);
+      log.success(`PROCESSING ${scheduledPosts.length} post(s):`);
       log.success(
         `Found ${scheduledPosts.length} scheduled post(s) to process`
       );
@@ -263,13 +263,14 @@ export class SchedulerService {
               post.scheduledAt
             );
 
-            // Check if post already has this idempotency key (job already created)
-            if (post.idempotencyKey === idempotencyKey) {
-              log.info(
-                `Job already created with key ${idempotencyKey}, skipping`
-              );
-              continue;
-            }
+            // // Check if post already has this idempotency key (job already created)
+            // // Skip this check if idempotency is disabled
+            // if (idempotencyKey && post.idempotencyKey === idempotencyKey) {
+            //   log.info(
+            //     `⏭️  Post already queued for publishing. Skipping duplicate job creation.`
+            //   );
+            //   continue;
+            // }
 
             // Generate content hash for duplicate detection
             post.contentHash = generateContentHash(
@@ -320,7 +321,9 @@ export class SchedulerService {
 
             // Update post status to reflect it's queued with progress tracking
             post.jobId = jobId;
-            post.idempotencyKey = idempotencyKey;
+            if (idempotencyKey) {
+              post.idempotencyKey = idempotencyKey;
+            }
             post.status = PostStatus.PUBLISHING;
             post.publishingProgress = {
               status: "publishing",

@@ -13,10 +13,20 @@ const DUPLICATION_WINDOW_HOURS = parseInt(
   process.env.DUPLICATION_WINDOW_HOURS || "24",
   10
 );
+// Idempotency window: Prevent duplicate posts within this time (defaults to 3 days)
+// Set IDEMPOTENCY_WINDOW_HOURS to control how far back to check for duplicates
+const IDEMPOTENCY_WINDOW_HOURS = parseInt(
+  process.env.IDEMPOTENCY_WINDOW_HOURS || "72", // 3 days default
+  10
+);
 const LOCK_TIMEOUT_MS = parseInt(
   process.env.EXECUTION_LOCK_TIMEOUT_MS || "300000",
   10
 ); // 5 minutes default
+const ENABLE_IDEMPOTENCY_CHECK =
+  process.env.ENABLE_IDEMPOTENCY_CHECK !== "false";
+// When enabled, idempotency key is checked to prevent duplicate scheduled jobs
+// Set ENABLE_IDEMPOTENCY_CHECK=false to disable this check (useful for development)
 
 export interface DuplicateCheckResult {
   isDuplicate: boolean;
@@ -33,8 +43,12 @@ export class IdempotencyService {
   /**
    * Generate a unique idempotency key for a post
    * Format: post-{postId}-{scheduledAt timestamp or now}
+   * Returns null if idempotency checks are disabled
    */
-  generateIdempotencyKey(postId: string, scheduledAt?: Date): string {
+  generateIdempotencyKey(postId: string, scheduledAt?: Date): string | null {
+    if (!ENABLE_IDEMPOTENCY_CHECK) {
+      return null;
+    }
     const timestamp = scheduledAt ? scheduledAt.getTime() : Date.now();
     return `post-${postId}-${timestamp}`;
   }
@@ -94,6 +108,80 @@ export class IdempotencyService {
       };
     }
 
+    return { isDuplicate: false };
+  }
+
+  /**
+   * Check if post content was recently posted (within idempotency window)
+   * This prevents accidental duplicate posts within recent days
+   */
+  async checkRecentPostContent(
+    content: string,
+    imageUrls: string[] = [],
+    videoUrl?: string,
+    excludePostId?: string
+  ): Promise<DuplicateCheckResult> {
+    if (!ENABLE_IDEMPOTENCY_CHECK) {
+      return { isDuplicate: false };
+    }
+
+    const contentHash = generateContentHash(content, imageUrls, videoUrl);
+    const windowStart = new Date(
+      Date.now() - IDEMPOTENCY_WINDOW_HOURS * 60 * 60 * 1000
+    );
+
+    log.debug(`🔐 Checking recent posts within idempotency window...`);
+    log.debug(
+      `   Content hash: ${contentHash} | Window: ${this.formatTimeAgo(
+        windowStart
+      )} (${IDEMPOTENCY_WINDOW_HOURS}h)`
+    );
+
+    const query: any = {
+      contentHash,
+      status: {
+        $in: [
+          PostStatus.PUBLISHED,
+          PostStatus.PUBLISHING,
+          PostStatus.SCHEDULED,
+        ],
+      },
+      $or: [
+        { publishedAt: { $gte: windowStart } },
+        { scheduledAt: { $gte: windowStart } },
+        {
+          status: PostStatus.PUBLISHING,
+          "publishingProgress.startedAt": { $gte: windowStart },
+        },
+      ],
+    };
+
+    // Exclude current post from check
+    if (excludePostId) {
+      query._id = { $ne: excludePostId };
+    }
+
+    const recentPost = await Post.findOne(query).sort({
+      publishedAt: -1,
+      scheduledAt: -1,
+    });
+
+    if (recentPost) {
+      const postDate = recentPost.publishedAt || recentPost.scheduledAt;
+      const timeAgo = this.formatTimeAgo(postDate!);
+
+      log.warn(
+        `🚫 Idempotency check: Similar content found in post ${recentPost._id} from ${timeAgo}`
+      );
+
+      return {
+        isDuplicate: true,
+        existingPost: recentPost,
+        message: `Similar content was already posted ${timeAgo}. To avoid duplicate posts, please wait or use different content. (Window: ${IDEMPOTENCY_WINDOW_HOURS} hours)`,
+      };
+    }
+
+    log.debug(`✅ No recent duplicate content found`);
     return { isDuplicate: false };
   }
 

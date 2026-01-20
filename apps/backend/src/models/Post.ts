@@ -198,6 +198,5 @@ PostSchema.index({ contentHash: 1, publishedAt: 1 }); // For duplicate detection
 PostSchema.index({ "executionLock.expiresAt": 1 }); // For lock cleanup
 PostSchema.index({ userId: 1, createdAt: -1 }); // For user's posts
 PostSchema.index({ threadsAccountId: 1, status: 1 }); // For account-specific posts
-PostSchema.index({ bulkPostId: 1 }); // For grouped posts
 
 export const Post = mongoose.model<IPost>("Post", PostSchema);

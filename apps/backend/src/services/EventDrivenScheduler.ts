@@ -169,11 +169,13 @@ export class EventDrivenScheduler {
       post.scheduledAt
     );
 
-    // Check if already processed
-    if (post.idempotencyKey === idempotencyKey) {
-      log.info(`  ⏭️  Already queued (${idempotencyKey})`);
-      return;
-    }
+    // // Check if already processed (skip if idempotency is enabled)
+    // if (idempotencyKey && post.idempotencyKey === idempotencyKey) {
+    //   log.info(
+    //     `  ⏭️  Post already queued for publishing. Skipping duplicate job creation.`
+    //   );
+    //   return;
+    // }
 
     // Generate content hash for duplicate detection
     post.contentHash = generateContentHash(
@@ -216,7 +218,9 @@ export class EventDrivenScheduler {
 
       // Update post status
       post.jobId = jobId;
-      post.idempotencyKey = idempotencyKey;
+      if (idempotencyKey) {
+        post.idempotencyKey = idempotencyKey;
+      }
       post.status = PostStatus.PUBLISHING;
       post.publishingProgress = {
         status: "publishing",
